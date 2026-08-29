@@ -28,6 +28,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+_BOOT = Path(os.environ.get("BEAD_SWARM_HOME", Path(__file__).resolve().parent.parent)).expanduser().resolve()
+if str(_BOOT) not in sys.path:
+    sys.path.insert(0, str(_BOOT))
+
+from beadswarm.home import bin_dir, bin_path, swarm_home  # noqa: E402
+
 WAVE_SIZE_DEFAULT = 10
 MAX_WAVES_DEFAULT = 4
 STAGGER_DEFAULT = 30
@@ -170,6 +176,8 @@ def classify_failure(text: str) -> str:
 def command_env() -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("ASDF_RUBY_VERSION", "4.0.1")
+    env.setdefault("BEAD_SWARM_HOME", str(swarm_home(__file__)))
+    env["PYTHONPATH"] = str(swarm_home(__file__)) + os.pathsep + env.get("PYTHONPATH", "")
     return env
 
 
@@ -645,8 +653,7 @@ def spawn_wave(
     else:
         argv = list(seat.spawn_prefix) + [prompt]
     env = command_env()
-    bin_dir = str(Path(__file__).resolve().parent)
-    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    env["PATH"] = str(bin_dir(__file__)) + os.pathsep + env.get("PATH", "")
     env["BEAD_SWARM_WAVE"] = str(wave_index)
     env["BEAD_SWARM_WAVE_SIZE"] = str(wave_size)
     env["BEAD_SWARM_SEAT"] = seat.id
@@ -666,7 +673,7 @@ def spawn_wave(
 
 
 def lab_worker_path() -> str:
-    return str(Path(__file__).resolve().parent / "bead-swarm-lab-worker")
+    return str(bin_path("bead-swarm-lab-worker", __file__))
 
 
 def close_proc_log(proc: subprocess.Popen[str]) -> None:

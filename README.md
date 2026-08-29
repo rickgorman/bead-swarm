@@ -32,6 +32,36 @@ Baseline plus overlap, then ten more combinations of dependencies, parallelism, 
 - `am file_reservations reserve --ttl 1` is **one minute**, not one second.
 - `bd dep add` refuses cycles. A stuck `in_progress` blocker is the realistic dry-frontier trap.
 
+## Agent setup (global vs per-repo)
+
+Do **not** copy `bin/bead-swarm` somewhere else. Lab workers import `beadswarm` from this checkout; a copied bin will break. Use a shim that sets `BEAD_SWARM_HOME` and execs the original, or call `./bin/bead-swarm`.
+
+**Per-repo** (this checkout, or a submodule in another app):
+
+```bash
+git clone git@github.com:rickgorman/bead-swarm.git
+cd bead-swarm
+bin/install --local          # executable bins + .grok/.agents skill links
+./bin/bead-swarm --help
+```
+
+Agents pick up `.claude/skills/bead-swarm` (and the `.grok` / `.agents` links). Invoke `./bin/bead-swarm --cwd <target> --epic <id>`.
+
+**Global** (one checkout, call `bead-swarm` from any directory):
+
+```bash
+bin/install --global         # shims in ~/.local/bin + user-level skills
+hash -r
+command -v bead-swarm
+bin/install --status
+```
+
+`--cwd` still selects the beads/AM project. A repo that already has its own `.claude/skills/bead-swarm` (Leverage) keeps that copy while you are inside it.
+
+Undo global: `bin/install --uninstall`.
+
+The skill (`.claude/skills/bead-swarm/SKILL.md`) is what tells an agent **when** to call the binary and **how** to find it.
+
 ## Run
 
 Needs `bd` (Go beads), `am` (MCP Agent Mail), `git`, and Python 3.11+.

@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+_BOOT = Path(os.environ.get("BEAD_SWARM_HOME", Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(_BOOT))
+
+from beadswarm.install import main
+
+if __name__ == "__main__":
+    sys.exit(main())

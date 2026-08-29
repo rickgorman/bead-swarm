@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+_BOOT = Path(os.environ.get("BEAD_SWARM_HOME", Path(__file__).resolve().parent.parent)).expanduser().resolve()
+sys.path.insert(0, str(_BOOT))
+os.environ.setdefault("BEAD_SWARM_HOME", str(_BOOT))
 
 from beadswarm.worker import main
 

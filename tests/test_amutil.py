@@ -42,6 +42,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(contract["mode"], "write")
 
 
+class ListScenariosTests(unittest.TestCase):
+    def test_list_includes_overlap(self) -> None:
+        from beadswarm.scenario import list_scenarios
+
+        names = [path.stem for path in list_scenarios()]
+        self.assertIn("01-overlap-exclusive", names)
+        self.assertIn("00-width6", names)
+
+
 class PromptTests(unittest.TestCase):
     def test_parse_allowed(self) -> None:
         prompt = "Allowed bead ids (this wave only):\n- ovx-a\n- ovx-b\n\nWhen you have finished\n"

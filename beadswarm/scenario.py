@@ -10,8 +10,9 @@ from typing import Any
 
 from beadswarm import bd
 from beadswarm.contract import render
+from beadswarm.home import swarm_home
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = swarm_home()
 SCENARIOS = REPO_ROOT / "scenarios"
 
 
@@ -195,12 +196,22 @@ def materialize(spec: dict[str, Any], dest: Path, *, force: bool = False) -> dic
     return meta
 
 
+def list_scenarios() -> list[Path]:
+    return sorted(SCENARIOS.glob("*.json"))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Materialize a bead-swarm lab scenario")
     parser.add_argument("--scenario", default="00-width6")
     parser.add_argument("--dir", default="/tmp/bead-swarm-lab")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--list", action="store_true", help="Print scenario ids and titles")
     args = parser.parse_args(argv)
+    if args.list:
+        for path in list_scenarios():
+            data = json.loads(path.read_text())
+            print(f"{path.stem}  {data.get('id', path.stem)}  {data.get('title', '')}")
+        return 0
     spec = load_scenario(args.scenario)
     dest = Path(args.dir).resolve()
     meta = materialize(spec, dest, force=args.force)
