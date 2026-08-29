@@ -1,0 +1,58 @@
+{
+  "id": "fan-in-merge",
+  "title": "Three parallel writers then a merge bead",
+  "description": "Fan-in DAG. a/b/c are ready together. merge is blocked by all three and concatenates their files.",
+  "prefix": "fin",
+  "epic": { "title": "[lab] fan-in merge" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 3,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "a",
+      "title": "write files/a.txt",
+      "files": ["files/a.txt"],
+      "mode": "write",
+      "payload": "alpha"
+    },
+    {
+      "key": "b",
+      "title": "write files/b.txt",
+      "files": ["files/b.txt"],
+      "mode": "write",
+      "payload": "bravo"
+    },
+    {
+      "key": "c",
+      "title": "write files/c.txt",
+      "files": ["files/c.txt"],
+      "mode": "write",
+      "payload": "charlie"
+    },
+    {
+      "key": "merge",
+      "title": "merge a/b/c into files/merged.txt",
+      "files": ["files/merged.txt"],
+      "mode": "merge",
+      "sources": ["files/a.txt", "files/b.txt", "files/c.txt"],
+      "payload": "MERGE"
+    }
+  ],
+  "deps": [
+    ["merge", "a"],
+    ["merge", "b"],
+    ["merge", "c"]
+  ],
+  "expect": {
+    "ready_width": 3,
+    "closed_epic": true,
+    "files": {
+      "files/merged.txt": {
+        "contains": ["alpha", "bravo", "charlie", "MERGE"]
+      }
+    }
+  }
+}

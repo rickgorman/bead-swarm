@@ -1,0 +1,814 @@
+#!/usr/bin/env python3
+"""Host-side bead-swarm launcher.
+
+Picks an orchestrator seat (fable > sol > opus5 > terra > grok > composer),
+caches that choice for one hour, then runs wave-shaped sessions: each
+orchestrator gets a hard budget of WAVE_SIZE beads (default 10) and exits.
+Independent waves run concurrently (staggered) so 20 ready beads become two
+sessions of 10, not one exhausted ringleader.
+
+The live chat session is not the orchestrator. This process spawns the
+harness that can actually run the chosen model (Claude cannot run Sol;
+Codex cannot run Fable; Grok cannot run either).
+
+Never invoke this from inside a wave (BEAD_SWARM_WAVE is set) — that forks.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+WAVE_SIZE_DEFAULT = 10
+MAX_WAVES_DEFAULT = 4
+STAGGER_DEFAULT = 30
+CACHE_TTL_SECONDS = 3600
+PROBE_TIMEOUT_DEFAULT = 45
+LAUNCHER_LOCK_TTL = 6 * 3600
+EPIC_TYPE = "epic"
+CACHE_DEFAULT = Path.home() / ".cache" / "flywheel" / "orchestrator-seat.json"
+
+QUOTA_MARKERS = (
+    "rate limit",
+    "rate_limit",
+    "429",
+    "extra usage",
+    "usage limit",
+    "out of extra",
+    "weekly limit",
+    "reached your limit",
+    "quota exceeded",
+    "quota_exceeded",
+    "try again later",
+    "overloaded",
+    "resource exhausted",
+)
+AUTH_MARKERS = (
+    "not logged in",
+    "unauthorized",
+    "401",
+    "token expired",
+    "authentication",
+    "auth_failed",
+)
+
+
+@dataclass(frozen=True)
+class Seat:
+    id: str
+    harness: str
+    program: str
+    ping: tuple[str, ...]
+    spawn_prefix: tuple[str, ...]
+    model_flag: str | None = None
+
+
+def default_seats() -> list[Seat]:
+    claude = os.environ.get("BEAD_SWARM_CLAUDE_BIN", "claude")
+    codex = os.environ.get("BEAD_SWARM_CODEX_BIN", "codex")
+    grok = os.environ.get("BEAD_SWARM_GROK_BIN", "grok")
+    cursor = os.environ.get("BEAD_SWARM_CURSOR_BIN", "cursor-agent")
+    fable_model = os.environ.get("BEAD_SWARM_FABLE_MODEL", "fable")
+    opus_model = os.environ.get("BEAD_SWARM_OPUS_MODEL", "opus")
+    sol_model = os.environ.get("BEAD_SWARM_SOL_MODEL", "gpt-5.6-sol")
+    terra_model = os.environ.get("BEAD_SWARM_TERRA_MODEL", "gpt-5.6-terra")
+    grok_model = os.environ.get("BEAD_SWARM_GROK_MODEL", "")
+    composer_model = os.environ.get("BEAD_SWARM_COMPOSER_MODEL", "composer-2.5")
+
+    grok_ping = [grok, "--single", "Reply with the single word pong."]
+    grok_spawn = [grok, "--output-format", "json", "--permission-mode", "bypassPermissions", "--always-approve"]
+    if grok_model:
+        grok_ping = [grok, "-m", grok_model, "--single", "Reply with the single word pong."]
+        grok_spawn = [grok, "-m", grok_model, "--output-format", "json", "--permission-mode", "bypassPermissions", "--always-approve"]
+
+    return [
+        Seat(
+            id="fable",
+            harness="claude",
+            program="claude-code",
+            ping=(claude, "-p", "--model", fable_model, "Reply with the single word pong."),
+            spawn_prefix=(claude, "-p", "--model", fable_model, "--permission-mode", "acceptEdits", "--output-format", "text"),
+            model_flag=fable_model,
+        ),
+        Seat(
+            id="sol",
+            harness="codex",
+            program="codex-cli",
+            ping=(codex, "exec", "-m", sol_model, "-s", "read-only", "--skip-git-repo-check", "Reply with the single word pong."),
+            spawn_prefix=(codex, "exec", "-m", sol_model, "-s", "workspace-write", "--skip-git-repo-check"),
+            model_flag=sol_model,
+        ),
+        Seat(
+            id="opus5",
+            harness="claude",
+            program="claude-code",
+            ping=(claude, "-p", "--model", opus_model, "Reply with the single word pong."),
+            spawn_prefix=(claude, "-p", "--model", opus_model, "--permission-mode", "acceptEdits", "--output-format", "text"),
+            model_flag=opus_model,
+        ),
+        Seat(
+            id="terra",
+            harness="codex",
+            program="codex-cli",
+            ping=(codex, "exec", "-m", terra_model, "-s", "read-only", "--skip-git-repo-check", "Reply with the single word pong."),
+            spawn_prefix=(codex, "exec", "-m", terra_model, "-s", "workspace-write", "--skip-git-repo-check"),
+            model_flag=terra_model,
+        ),
+        Seat(
+            id="grok",
+            harness="grok",
+            program="grok",
+            ping=tuple(grok_ping),
+            spawn_prefix=tuple(grok_spawn),
+            model_flag=grok_model or None,
+        ),
+        Seat(
+            id="composer",
+            harness="cursor",
+            program="cursor-agent",
+            ping=(cursor, "--print", "--output-format", "text", "-f", "--model", composer_model, "Reply with the single word pong."),
+            spawn_prefix=(cursor, "--print", "--output-format", "text", "-f", "--model", composer_model),
+            model_flag=composer_model,
+        ),
+    ]
+
+
+@dataclass
+class ProbeResult:
+    seat: Seat | None
+    skipped: list[dict[str, str]] = field(default_factory=list)
+    cached: bool = False
+    reason: str = ""
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def cache_path() -> Path:
+    return Path(os.environ.get("BEAD_SWARM_SEAT_CACHE", CACHE_DEFAULT))
+
+
+def classify_failure(text: str) -> str:
+    lower = text.lower()
+    if any(marker in lower for marker in QUOTA_MARKERS):
+        return "quota_dead"
+    if any(marker in lower for marker in AUTH_MARKERS):
+        return "auth_dead"
+    return "probe_failed"
+
+
+def command_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("ASDF_RUBY_VERSION", "4.0.1")
+    return env
+
+
+def run_cmd(argv: list[str], timeout: int, cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        argv,
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        env=command_env(),
+    )
+
+
+def ping_seat(seat: Seat, timeout: int) -> str | None:
+    """Return a skip reason, or None if the seat answered."""
+    if shutil.which(seat.ping[0]) is None and not os.path.isfile(seat.ping[0]):
+        return "bin_missing"
+    try:
+        result = run_cmd(list(seat.ping), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return "probe_timeout"
+    except OSError as exc:
+        return f"spawn_error:{exc.errno}"
+    blob = f"{result.stdout}\n{result.stderr}"
+    if result.returncode == 0:
+        return None
+    return classify_failure(blob)
+
+
+def load_cache() -> dict[str, Any] | None:
+    path = cache_path()
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    expires = data.get("expires_at")
+    if not expires:
+        return None
+    try:
+        expiry = datetime.fromisoformat(expires)
+    except ValueError:
+        return None
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=timezone.utc)
+    if now_utc() >= expiry:
+        return None
+    return data
+
+
+def save_cache(result: ProbeResult) -> None:
+    if result.seat is None:
+        return
+    path = cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "chosen": result.seat.id,
+        "harness": result.seat.harness,
+        "reason": result.reason,
+        "skipped": result.skipped,
+        "probed_at": now_utc().isoformat(),
+        "expires_at": (now_utc() + timedelta(seconds=CACHE_TTL_SECONDS)).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def invalidate_cache() -> None:
+    path = cache_path()
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def choose_seat(seats: list[Seat], timeout: int, reprobe: bool, pin: str | None) -> ProbeResult:
+    by_id = {seat.id: seat for seat in seats}
+    if pin:
+        if pin not in by_id:
+            raise SystemExit(f"unknown seat {pin}")
+        return ProbeResult(seat=by_id[pin], reason="pinned", cached=False)
+
+    if not reprobe:
+        cached = load_cache()
+        if cached and cached.get("chosen") in by_id:
+            return ProbeResult(
+                seat=by_id[cached["chosen"]],
+                skipped=list(cached.get("skipped") or []),
+                cached=True,
+                reason=cached.get("reason") or "cached",
+            )
+
+    skipped: list[dict[str, str]] = []
+    for seat in seats:
+        reason = ping_seat(seat, timeout)
+        if reason is None:
+            result = ProbeResult(seat=seat, skipped=skipped, reason="probed")
+            save_cache(result)
+            return result
+        skipped.append({"id": seat.id, "reason": reason})
+    return ProbeResult(seat=None, skipped=skipped, reason="ladder_exhausted")
+
+
+def br_bin() -> str:
+    return os.environ.get("BR_BIN", os.environ.get("BEAD_SWARM_BR_BIN", "br"))
+
+
+def am_bin() -> str:
+    return os.environ.get("AM_BIN", os.environ.get("BEAD_SWARM_AM_BIN", "am"))
+
+
+def parse_issues(stdout: str) -> list[dict[str, Any]]:
+    payload = json.loads(stdout or "[]")
+    if isinstance(payload, dict) and "issues" in payload:
+        payload = payload["issues"]
+    if isinstance(payload, dict) and payload.get("id"):
+        return [payload]
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def br_show(cwd: str, timeout: int, issue_id: str) -> dict[str, Any] | None:
+    result = run_cmd([br_bin(), "show", issue_id, "--json"], timeout=timeout, cwd=cwd)
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, list):
+        payload = payload[0] if payload else None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("error") or not payload.get("id"):
+        return None
+    return payload
+
+
+def list_open_epics(cwd: str, timeout: int) -> list[dict[str, Any]]:
+    result = run_cmd(
+        [br_bin(), "list", "-t", "epic", "--status", "open", "--json", "--limit", "0"],
+        timeout=timeout,
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"br list epics failed: {result.stderr.strip() or result.stdout.strip()}")
+    epics = [item for item in parse_issues(result.stdout) if item.get("issue_type") == EPIC_TYPE]
+    epics.sort(key=lambda item: (item.get("priority") if isinstance(item.get("priority"), int) else 9, item.get("id") or ""))
+    return epics
+
+
+def br_children(cwd: str, timeout: int, parent_id: str) -> list[dict[str, Any]]:
+    result = run_cmd([br_bin(), "children", parent_id, "--json"], timeout=timeout, cwd=cwd)
+    if result.returncode != 0:
+        return []
+    try:
+        return parse_issues(result.stdout)
+    except json.JSONDecodeError:
+        return []
+
+
+def br_all_children(cwd: str, timeout: int, parent_id: str) -> list[dict[str, Any]]:
+    """Open and closed children. `bd children` hides closed, which would skip wrap."""
+    result = run_cmd(
+        [br_bin(), "list", "--parent", parent_id, "--all", "--json", "--limit", "0"],
+        timeout=timeout,
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        return []
+    try:
+        return parse_issues(result.stdout)
+    except json.JSONDecodeError:
+        return []
+
+
+def epic_ids_in_tree(cwd: str, timeout: int, root_epic_id: str) -> set[str]:
+    ids = {root_epic_id}
+    queue = [root_epic_id]
+    seen: set[str] = set()
+    while queue:
+        parent = queue.pop(0)
+        if parent in seen:
+            continue
+        seen.add(parent)
+        for child in br_all_children(cwd, timeout, parent):
+            child_id = child.get("id")
+            if not child_id or child.get("issue_type") != EPIC_TYPE:
+                continue
+            ids.add(child_id)
+            queue.append(child_id)
+    return ids
+
+
+def close_eligible_in_tree(cwd: str, timeout: int, root_epic_id: str) -> list[str]:
+    """Close epics in this tree only, children-first, once every child is closed.
+
+    Never runs global `bd epic close-eligible` — that would close unrelated
+    epics in a shared beads db.
+    """
+    closed: list[str] = []
+    for _ in range(64):
+        progressed = False
+        for epic_id in sorted(epic_ids_in_tree(cwd, timeout, root_epic_id), key=lambda item: item.count("."), reverse=True):
+            shown = br_show(cwd, timeout, epic_id)
+            if shown is None or shown.get("status") == "closed":
+                continue
+            kids = br_all_children(cwd, timeout, epic_id)
+            if not kids or any((child.get("status") or "") != "closed" for child in kids):
+                continue
+            result = run_cmd(
+                [br_bin(), "close", epic_id, "--reason", f"all {len(kids)} children closed", "--json"],
+                timeout=timeout,
+                cwd=cwd,
+            )
+            if result.returncode != 0:
+                print(
+                    f"bin/bead-swarm: failed to close epic {epic_id}: {result.stderr.strip() or result.stdout.strip()}",
+                    file=sys.stderr,
+                )
+                continue
+            print(f"closed epic {epic_id} (all {len(kids)} children closed)", flush=True)
+            closed.append(epic_id)
+            progressed = True
+        if not progressed:
+            break
+    return closed
+
+
+def descendant_ids(cwd: str, timeout: int, epic_id: str) -> set[str]:
+    found: set[str] = set()
+    queue = [epic_id]
+    while queue:
+        parent = queue.pop(0)
+        for child in br_children(cwd, timeout, parent):
+            child_id = child.get("id")
+            if not child_id or child_id in found:
+                continue
+            found.add(child_id)
+            if child.get("issue_type") == EPIC_TYPE:
+                queue.append(child_id)
+    return found
+
+
+def format_epic_list(epics: list[dict[str, Any]]) -> str:
+    lines = ["Open epics:"]
+    for index, epic in enumerate(epics, start=1):
+        priority = epic.get("priority")
+        prefix = f"P{priority} " if isinstance(priority, int) else ""
+        lines.append(f"  {index}. {epic.get('id')}  {prefix}{epic.get('title') or ''}")
+    return "\n".join(lines)
+
+
+def resolve_epic(cwd: str, timeout: int, epic_id: str | None) -> dict[str, Any]:
+    if epic_id:
+        shown = br_show(cwd, timeout, epic_id)
+        if shown is None:
+            print(f"bin/bead-swarm: epic not found: {epic_id}", file=sys.stderr)
+            raise SystemExit(1)
+        if shown.get("issue_type") != EPIC_TYPE:
+            print(f"bin/bead-swarm: {epic_id} is a {shown.get('issue_type') or 'bead'}, not an epic", file=sys.stderr)
+            raise SystemExit(1)
+        return shown
+
+    epics = list_open_epics(cwd, timeout)
+    if not epics:
+        print("bin/bead-swarm: no open epics", file=sys.stderr)
+        raise SystemExit(1)
+    listing = format_epic_list(epics)
+    print(listing, flush=True)
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        hint = "pass --epic <id> to pick one"
+        print(hint, flush=True)
+        print(hint, file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        choice = input("Epic [number or id]: ").strip()
+    except EOFError:
+        raise SystemExit(1)
+    if not choice:
+        print("bin/bead-swarm: no epic selected", file=sys.stderr)
+        raise SystemExit(1)
+    if choice.isdigit():
+        index = int(choice)
+        if index < 1 or index > len(epics):
+            print(f"bin/bead-swarm: epic not found: {choice}", file=sys.stderr)
+            raise SystemExit(1)
+        return epics[index - 1]
+    matches = [epic for epic in epics if epic.get("id") == choice]
+    if matches:
+        return matches[0]
+    shown = br_show(cwd, timeout, choice)
+    if shown is None or shown.get("issue_type") != EPIC_TYPE:
+        print(f"bin/bead-swarm: epic not found: {choice}", file=sys.stderr)
+        raise SystemExit(1)
+    return shown
+
+
+def ready_beads(cwd: str, timeout: int, allowed_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    argv = [br_bin(), "ready", "--json", "--unassigned", "--limit", "200"]
+    result = run_cmd(argv, timeout=timeout, cwd=cwd)
+    if result.returncode != 0:
+        raise SystemExit(f"br ready failed: {result.stderr.strip() or result.stdout.strip()}")
+    beads = []
+    for item in parse_issues(result.stdout):
+        if item.get("issue_type") == EPIC_TYPE:
+            continue
+        if allowed_ids is not None and item.get("id") not in allowed_ids:
+            continue
+        beads.append(item)
+    return beads
+
+
+def wave_prompt(
+    seat: Seat,
+    wave_index: int,
+    wave_size: int,
+    project: str,
+    epic_id: str,
+    bead_ids: list[str],
+) -> str:
+    id_lines = "\n".join(f"- {bead_id}" for bead_id in bead_ids) or "- (none)"
+    return f"""You are a bead-swarm WAVE orchestrator, not a ringleader for the whole graph.
+
+Seat: {seat.id} (harness {seat.harness}, model {seat.model_flag or "default"})
+Epic: {epic_id}
+Wave: {wave_index}
+HARD BUDGET: process at most {wave_size} beads from this list, then EXIT even if more remain.
+The host launcher (`bin/bead-swarm`) will spawn more waves. Do not re-exec bin/bead-swarm.
+
+Allowed bead ids (this wave only):
+{id_lines}
+
+Follow `.claude/archived/commands/bead-swarm.md` inner loop:
+- only claim ids on the allowed list (ignore off-epic `bv` picks)
+- skip epics; you claim verify:slice / verify:landing
+- `br update <id> --claim` then Agent Mail reserve + thread
+- spawn a FRESH coder subagent per bead; you write ZERO product code
+- you verify (`bin/bead-verify`, `bin/bead-check`) with a different model than the coder
+- close with evidence; file follow-ups as beads
+
+Register once:
+  am macros start-session --json --project "{project}" --program {seat.program} --model {seat.model_flag or seat.id} --agent-name Wave-{wave_index}-{seat.id} --task bead-swarm-wave-{wave_index}
+
+When you have finished this list, print WAVE_DONE and exit 0.
+"""
+
+
+def am_reserve_conflict(result: subprocess.CompletedProcess[str]) -> bool:
+    """Agent Mail reports exclusive conflicts with exit 0 + JSON `conflicts`."""
+    blob = f"{result.stdout}\n{result.stderr}"
+    if "FILE_RESERVATION_CONFLICT" in blob:
+        return True
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict) and payload.get("conflicts"):
+        return True
+    return result.returncode != 0 and "conflict" in blob.lower()
+
+
+def open_work_in_tree(cwd: str, timeout: int, root_epic_id: str) -> list[dict[str, Any]]:
+    """Open descendants (tasks and nested epics) under root_epic_id."""
+    open_items: list[dict[str, Any]] = []
+    queue = [root_epic_id]
+    seen: set[str] = set()
+    while queue:
+        parent = queue.pop(0)
+        if parent in seen:
+            continue
+        seen.add(parent)
+        for child in br_all_children(cwd, timeout, parent):
+            child_id = child.get("id")
+            if not child_id:
+                continue
+            if child.get("issue_type") == EPIC_TYPE:
+                queue.append(child_id)
+            if (child.get("status") or "") != "closed":
+                open_items.append(child)
+    return open_items
+
+
+def finish_tree(cwd: str, timeout: int, epic_id: str) -> int:
+    """Close eligible epics; exit 1 if the frontier is dry but work remains."""
+    close_eligible_in_tree(cwd, timeout, epic_id)
+    leftover = open_work_in_tree(cwd, timeout, epic_id)
+    tasks = [item for item in leftover if item.get("issue_type") != EPIC_TYPE]
+    epics = [item for item in leftover if item.get("issue_type") == EPIC_TYPE]
+    if tasks:
+        print(f"frontier dry with {len(tasks)} open beads (blocked or stuck)", flush=True)
+        return 1
+    if epics:
+        print(f"tasks done but {len(epics)} epic(s) remain open", flush=True)
+        return 1
+    print("frontier dry")
+    return 0
+
+
+def am_register_launcher(project: str, timeout: int) -> None:
+    argv = [
+        am_bin(),
+        "agents",
+        "register",
+        "--project",
+        project,
+        "--program",
+        "bead-swarm",
+        "--model",
+        "host-launcher",
+        "--name",
+        "AmberLake",
+        "--task",
+        "bead-swarm-launcher",
+        "--json",
+    ]
+    result = run_cmd(argv, timeout=timeout, cwd=project)
+    if result.returncode != 0:
+        raise SystemExit(f"am agents register failed: {result.stderr.strip() or result.stdout.strip()}")
+
+
+def am_lock_launcher(project: str, timeout: int) -> None:
+    lock_path = os.path.join(project, "tmp", "bead-swarm", "launcher.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    Path(lock_path).touch()
+    argv = [
+        am_bin(),
+        "file_reservations",
+        "reserve",
+        project,
+        "AmberLake",
+        "tmp/bead-swarm/launcher.lock",
+        "--exclusive",
+        "--ttl",
+        str(LAUNCHER_LOCK_TTL),
+        "--reason",
+        "bead-swarm-launcher",
+    ]
+    result = run_cmd(argv, timeout=timeout, cwd=project)
+    combined = f"{result.stdout}\n{result.stderr}"
+    if am_reserve_conflict(result):
+        raise SystemExit("another bead-swarm launcher holds tmp/bead-swarm/launcher.lock")
+    if result.returncode != 0:
+        raise SystemExit(f"am reserve failed: {combined.strip()}")
+
+
+def announce_seat(result: ProbeResult) -> None:
+    if result.seat is None:
+        skipped = ", ".join(f"{row['id']}={row['reason']}" for row in result.skipped) or "none"
+        print(f"orchestrator: none (ladder exhausted: {skipped})", file=sys.stderr)
+        return
+    extra = ""
+    if result.skipped:
+        extra = " (" + ", ".join(f"{row['id']} {row['reason']}" for row in result.skipped) + ")"
+    cache = " cached" if result.cached else ""
+    print(f"orchestrator: {result.seat.id}{extra}{cache}", flush=True)
+
+
+def spawn_wave(
+    seat: Seat,
+    wave_index: int,
+    wave_size: int,
+    project: str,
+    log_dir: Path,
+    epic_id: str,
+    bead_ids: list[str],
+) -> subprocess.Popen[str]:
+    prompt = wave_prompt(seat, wave_index, wave_size, project, epic_id, bead_ids)
+    prompt_file = log_dir / f"wave-{wave_index}.prompt.md"
+    prompt_file.write_text(prompt)
+    if os.environ.get("BEAD_SWARM_LAB") == "1":
+        argv = [lab_worker_path(), "--prompt-file", str(prompt_file), "--project", project]
+    else:
+        argv = list(seat.spawn_prefix) + [prompt]
+    env = command_env()
+    bin_dir = str(Path(__file__).resolve().parent)
+    env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+    env["BEAD_SWARM_WAVE"] = str(wave_index)
+    env["BEAD_SWARM_WAVE_SIZE"] = str(wave_size)
+    env["BEAD_SWARM_SEAT"] = seat.id
+    log_path = log_dir / f"wave-{wave_index}.log"
+    log_handle = open(log_path, "w")
+    proc = subprocess.Popen(
+        argv,
+        cwd=project,
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._bead_swarm_log = log_handle  # type: ignore[attr-defined]
+    print(f"wave {wave_index}: spawned pid={proc.pid} seat={seat.id} log={log_path}", flush=True)
+    return proc
+
+
+def lab_worker_path() -> str:
+    return str(Path(__file__).resolve().parent / "bead-swarm-lab-worker")
+
+
+def close_proc_log(proc: subprocess.Popen[str]) -> None:
+    handle = getattr(proc, "_bead_swarm_log", None)
+    if handle is not None:
+        handle.close()
+
+
+def wait_one(procs: dict[int, subprocess.Popen[str]]) -> int:
+    while True:
+        for wave_index, proc in list(procs.items()):
+            code = proc.poll()
+            if code is not None:
+                close_proc_log(proc)
+                print(f"wave {wave_index}: exit {code}", flush=True)
+                if code != 0:
+                    invalidate_cache()
+                del procs[wave_index]
+                return wave_index
+        time.sleep(1)
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Wave-shaped bead-swarm launcher")
+    parser.add_argument("--wave-size", type=int, default=int(os.environ.get("BEAD_SWARM_WAVE_SIZE", WAVE_SIZE_DEFAULT)))
+    parser.add_argument("--max-waves", type=int, default=int(os.environ.get("BEAD_SWARM_MAX_WAVES", MAX_WAVES_DEFAULT)))
+    parser.add_argument("--stagger-seconds", type=int, default=int(os.environ.get("BEAD_SWARM_STAGGER", STAGGER_DEFAULT)))
+    parser.add_argument("--probe-timeout", type=int, default=int(os.environ.get("BEAD_SWARM_PROBE_TIMEOUT", PROBE_TIMEOUT_DEFAULT)))
+    parser.add_argument("--seat", help="Pin a seat id (skip probe)")
+    parser.add_argument("--reprobe", action="store_true", help="Ignore the 1h seat cache")
+    parser.add_argument("--probe-only", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--once", action="store_true", help="Spawn one round of waves and wait; do not recycle")
+    parser.add_argument("--no-am", action="store_true")
+    parser.add_argument("--epic", help="Epic id to empty (required unless stdin is a TTY picker)")
+    parser.add_argument("--lab", action="store_true", help="Spawn the deterministic lab worker instead of an LLM harness")
+    parser.add_argument("--cwd", default=os.getcwd())
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    if os.environ.get("BEAD_SWARM_WAVE"):
+        print("bin/bead-swarm: refusing to nest inside an existing wave", file=sys.stderr)
+        return 2
+
+    args = parse_args(argv or sys.argv[1:])
+    if args.lab:
+        os.environ["BEAD_SWARM_LAB"] = "1"
+    project = str(Path(args.cwd).resolve())
+    seats = default_seats()
+    if args.probe_only:
+        probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat)
+        announce_seat(probe)
+        return 0 if probe.seat else 1
+
+    epic = resolve_epic(project, args.probe_timeout, args.epic)
+    epic_id = str(epic["id"])
+    allowed = descendant_ids(project, args.probe_timeout, epic_id)
+    print(f"epic: {epic_id}  {epic.get('title') or ''}", flush=True)
+
+    probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat)
+    announce_seat(probe)
+    if probe.seat is None:
+        return 1
+
+    beads = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+    ready_count = len(beads)
+    print(f"ready (non-epic, this epic): {ready_count}", flush=True)
+    if ready_count == 0:
+        if args.dry_run:
+            print("frontier dry")
+            return 0
+        return finish_tree(project, args.probe_timeout, epic_id)
+
+    waves_needed = min(args.max_waves, max(1, (ready_count + args.wave_size - 1) // args.wave_size))
+    print(
+        f"plan: {waves_needed} wave(s) × {args.wave_size} beads, stagger {args.stagger_seconds}s, seat {probe.seat.id}",
+        flush=True,
+    )
+    if args.dry_run:
+        return 0
+
+    if not args.no_am:
+        am_register_launcher(project, timeout=args.probe_timeout)
+        am_lock_launcher(project, timeout=args.probe_timeout)
+
+    log_dir = Path(project) / "tmp" / "bead-swarm" / now_utc().strftime("%Y%m%dT%H%M%SZ")
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    children: dict[int, subprocess.Popen[str]] = {}
+
+    def handle_stop(_signum: int, _frame: Any) -> None:
+        for proc in children.values():
+            proc.terminate()
+        sys.exit(130)
+
+    signal.signal(signal.SIGINT, handle_stop)
+    signal.signal(signal.SIGTERM, handle_stop)
+
+    next_wave = 1
+    spawned_this_round = 0
+    chunks = [beads[i : i + args.wave_size] for i in range(0, len(beads), args.wave_size)]
+    while spawned_this_round < waves_needed:
+        if next_wave > 1 and args.stagger_seconds > 0:
+            time.sleep(args.stagger_seconds)
+        assigned = [item["id"] for item in chunks[spawned_this_round] if item.get("id")]
+        children[next_wave] = spawn_wave(
+            probe.seat, next_wave, args.wave_size, project, log_dir, epic_id, assigned
+        )
+        next_wave += 1
+        spawned_this_round += 1
+
+    while children:
+        wait_one(children)
+        close_eligible_in_tree(project, args.probe_timeout, epic_id)
+        if args.once:
+            continue
+        allowed = descendant_ids(project, args.probe_timeout, epic_id)
+        remaining = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+        if not remaining:
+            continue
+        if len(children) >= args.max_waves:
+            continue
+        probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=False, pin=args.seat)
+        if probe.seat is None:
+            announce_seat(probe)
+            break
+        if args.stagger_seconds > 0:
+            time.sleep(args.stagger_seconds)
+        assigned = [item["id"] for item in remaining[: args.wave_size] if item.get("id")]
+        children[next_wave] = spawn_wave(
+            probe.seat, next_wave, args.wave_size, project, log_dir, epic_id, assigned
+        )
+        next_wave += 1
+
+    allowed = descendant_ids(project, args.probe_timeout, epic_id)
+    leftover = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+    if leftover:
+        print(f"waves finished; {len(leftover)} ready beads remain", flush=True)
+        return 1
+    return finish_tree(project, args.probe_timeout, epic_id)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

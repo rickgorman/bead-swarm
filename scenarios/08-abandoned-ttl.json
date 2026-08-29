@@ -1,0 +1,32 @@
+{
+  "id": "abandoned-ttl",
+  "title": "Abandoned in_progress vs AM TTL reclaim",
+  "description": "Worker claims, exclusive-leases, then dies without close or release. The bead stays in_progress (not ready) and the AM lease still conflicts. AM --ttl 1 is one minute (the CLI help says seconds). Clearing either lock alone is not enough; reopen the bead and release the lease, then a second worker finishes.",
+  "prefix": "abd",
+  "epic": { "title": "[lab] abandoned claim + AM TTL" },
+  "harness": "abandon-then-reopen",
+  "run": {
+    "abandon_ttl": 2,
+    "wave_size": 1,
+    "max_waves": 1,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "stuck",
+      "title": "write files/stuck.txt",
+      "files": ["files/stuck.txt"],
+      "mode": "write",
+      "lease": "exclusive",
+      "ttl": 2,
+      "payload": "STUCK"
+    }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": {
+      "files/stuck.txt": { "contains": ["STUCK"] }
+    }
+  }
+}

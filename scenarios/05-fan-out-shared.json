@@ -1,0 +1,65 @@
+{
+  "id": "fan-out-shared",
+  "title": "Fan-out from a seed file with shared leases",
+  "description": "Seed exclusive-writes files/seed.txt. Three children take a shared lease on the seed and exclusive-write their own copies. Shared vs exclusive in one graph.",
+  "prefix": "fot",
+  "epic": { "title": "[lab] fan-out shared seed" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 3,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "seed",
+      "title": "write files/seed.txt",
+      "files": ["files/seed.txt"],
+      "mode": "write",
+      "lease": "exclusive",
+      "payload": "SEED"
+    },
+    {
+      "key": "x",
+      "title": "copy seed to files/x.txt",
+      "files": ["files/x.txt"],
+      "source": "files/seed.txt",
+      "mode": "copy",
+      "lease": "shared",
+      "payload": "X"
+    },
+    {
+      "key": "y",
+      "title": "copy seed to files/y.txt",
+      "files": ["files/y.txt"],
+      "source": "files/seed.txt",
+      "mode": "copy",
+      "lease": "shared",
+      "payload": "Y"
+    },
+    {
+      "key": "z",
+      "title": "copy seed to files/z.txt",
+      "files": ["files/z.txt"],
+      "source": "files/seed.txt",
+      "mode": "copy",
+      "lease": "shared",
+      "payload": "Z"
+    }
+  ],
+  "deps": [
+    ["x", "seed"],
+    ["y", "seed"],
+    ["z", "seed"]
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": {
+      "files/seed.txt": { "contains": ["SEED"] },
+      "files/x.txt": { "contains": ["SEED", "X"] },
+      "files/y.txt": { "contains": ["SEED", "Y"] },
+      "files/z.txt": { "contains": ["SEED", "Z"] }
+    }
+  }
+}

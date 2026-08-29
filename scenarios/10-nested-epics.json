@@ -1,0 +1,74 @@
+{
+  "id": "nested-epics",
+  "title": "Program epic with two slices that overlap on files/shared.txt",
+  "description": "Close-eligible must close slice epics first, then the program. Cross-slice appends share one file so AM still serializes.",
+  "prefix": "nst",
+  "epic": { "title": "[lab] program with two slices" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 4,
+    "stagger_seconds": 0
+  },
+  "slices": [
+    {
+      "key": "alpha",
+      "title": "[lab] slice alpha",
+      "beads": [
+        {
+          "key": "a1",
+          "title": "write files/a1.txt",
+          "files": ["files/a1.txt"],
+          "mode": "write",
+          "payload": "A1"
+        },
+        {
+          "key": "a2",
+          "title": "append ALPHA to files/shared.txt",
+          "files": ["files/shared.txt"],
+          "mode": "append",
+          "lease": "exclusive",
+          "payload": "ALPHA"
+        }
+      ]
+    },
+    {
+      "key": "beta",
+      "title": "[lab] slice beta",
+      "beads": [
+        {
+          "key": "b1",
+          "title": "write files/b1.txt",
+          "files": ["files/b1.txt"],
+          "mode": "write",
+          "payload": "B1"
+        },
+        {
+          "key": "b2",
+          "title": "append BETA to files/shared.txt",
+          "files": ["files/shared.txt"],
+          "mode": "append",
+          "lease": "exclusive",
+          "payload": "BETA"
+        }
+      ]
+    }
+  ],
+  "deps": [
+    ["a2", "a1"],
+    ["b2", "b1"]
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "closed_slices": true,
+    "files": {
+      "files/a1.txt": { "contains": ["A1"] },
+      "files/b1.txt": { "contains": ["B1"] },
+      "files/shared.txt": {
+        "line_count": 2,
+        "contains": ["ALPHA", "BETA"]
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "id": "width6",
+  "title": "20 independent files, max ready width 6",
+  "description": "Baseline dummy epic. Layered DAG 6+6+6+2. Each bead writes its own files/NN.txt. Pressure-tests wave recycle without overlap.",
+  "prefix": "wid",
+  "generate": {
+    "kind": "layered",
+    "count": 20,
+    "width": 6
+  },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 3,
+    "max_waves": 2,
+    "stagger_seconds": 0
+  },
+  "expect": {
+    "ready_width": 6,
+    "closed_epic": true,
+    "file_count": 20
+  }
+}

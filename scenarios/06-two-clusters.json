@@ -1,0 +1,37 @@
+{
+  "id": "two-clusters",
+  "title": "Two disjoint chains in one epic",
+  "description": "Cluster X and cluster Y never share files or deps. Ready width 2. Waves should drain both in parallel and still close the epic.",
+  "prefix": "clu",
+  "epic": { "title": "[lab] two disjoint clusters" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 2,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    { "key": "x1", "title": "write files/x1.txt", "files": ["files/x1.txt"], "mode": "write", "payload": "X1" },
+    { "key": "x2", "title": "write files/x2.txt", "files": ["files/x2.txt"], "mode": "write", "payload": "X2" },
+    { "key": "x3", "title": "write files/x3.txt", "files": ["files/x3.txt"], "mode": "write", "payload": "X3" },
+    { "key": "y1", "title": "write files/y1.txt", "files": ["files/y1.txt"], "mode": "write", "payload": "Y1" },
+    { "key": "y2", "title": "write files/y2.txt", "files": ["files/y2.txt"], "mode": "write", "payload": "Y2" },
+    { "key": "y3", "title": "write files/y3.txt", "files": ["files/y3.txt"], "mode": "write", "payload": "Y3" }
+  ],
+  "deps": [
+    ["x2", "x1"],
+    ["x3", "x2"],
+    ["y2", "y1"],
+    ["y3", "y2"]
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "files": {
+      "files/x1.txt": { "contains": ["X1"] },
+      "files/x3.txt": { "contains": ["X3"] },
+      "files/y1.txt": { "contains": ["Y1"] },
+      "files/y3.txt": { "contains": ["Y3"] }
+    }
+  }
+}

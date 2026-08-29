@@ -1,0 +1,44 @@
+{
+  "id": "touch-label",
+  "title": "touch: label serializes a hotspot without a blocks edge",
+  "description": "Both beads are ready. Each carries touch:files/hotspot.txt (the migrate-file convention). The worker treats that label as an exclusive lease even though the DAG does not.",
+  "prefix": "tch",
+  "epic": { "title": "[lab] touch: hotspot without blocks" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 2,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "left",
+      "title": "append LEFT to hotspot",
+      "labels": ["touch:files/hotspot.txt"],
+      "files": ["files/hotspot.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "LEFT"
+    },
+    {
+      "key": "right",
+      "title": "append RIGHT to hotspot",
+      "labels": ["touch:files/hotspot.txt"],
+      "files": ["files/hotspot.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "RIGHT"
+    }
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "labels_share": "touch:files/hotspot.txt",
+    "files": {
+      "files/hotspot.txt": {
+        "line_count": 2,
+        "contains": ["LEFT", "RIGHT"]
+      }
+    }
+  }
+}

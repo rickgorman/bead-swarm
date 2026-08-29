@@ -1,0 +1,29 @@
+{
+  "id": "claim-race",
+  "title": "Two workers race br update --claim on one ready bead",
+  "description": "Atomic claim is the bead lock. Exactly one worker writes the file; the other logs claim-miss. File is written once.",
+  "prefix": "rac",
+  "epic": { "title": "[lab] claim race" },
+  "harness": "dual-worker",
+  "beads": [
+    {
+      "key": "only",
+      "title": "write files/only.txt",
+      "files": ["files/only.txt"],
+      "mode": "write",
+      "payload": "ONLY"
+    }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": false,
+    "claim_misses_min": 1,
+    "closed_beads": 1,
+    "files": {
+      "files/only.txt": {
+        "line_count": 1,
+        "contains": ["ONLY"]
+      }
+    }
+  }
+}

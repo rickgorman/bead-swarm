@@ -1,0 +1,44 @@
+{
+  "id": "overlap-exclusive",
+  "title": "Two ready beads exclusive-append the same file, no blocks edge",
+  "description": "Graph says they can run in parallel. Agent Mail exclusive leases serialize the appends so both lines survive.",
+  "prefix": "ovx",
+  "epic": { "title": "[lab] exclusive overlap on files/shared.txt" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 2,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "a",
+      "title": "append A to files/shared.txt",
+      "files": ["files/shared.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "A",
+      "hold_seconds": 0.35
+    },
+    {
+      "key": "b",
+      "title": "append B to files/shared.txt",
+      "files": ["files/shared.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "B",
+      "hold_seconds": 0.35
+    }
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "am_retries_min": 1,
+    "files": {
+      "files/shared.txt": {
+        "line_count": 2,
+        "contains": ["A", "B"]
+      }
+    }
+  }
+}

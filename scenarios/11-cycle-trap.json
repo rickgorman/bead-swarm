@@ -1,0 +1,27 @@
+{
+  "id": "cycle-trap",
+  "title": "bd rejects cycles; a stuck in_progress blocker leaves the frontier dry",
+  "description": "bd dep add refuses A↔B. Separately, claiming A without closing it makes ready empty while B stays blocked. Swarm must exit 1 and leave the epic open instead of hanging or wrapping.",
+  "prefix": "cyc",
+  "epic": { "title": "[lab] cycle + stuck blocker" },
+  "harness": "stuck-blocker",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 1,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    { "key": "a", "title": "write files/a.txt", "files": ["files/a.txt"], "mode": "write", "payload": "A" },
+    { "key": "b", "title": "write files/b.txt", "files": ["files/b.txt"], "mode": "write", "payload": "B" }
+  ],
+  "deps": [["b", "a"]],
+  "cycle": ["a", "b"],
+  "expect": {
+    "ready_width": 1,
+    "cycle_rejected": true,
+    "closed_epic": false,
+    "exit_code": 1,
+    "open_beads": 2,
+    "stdout_contains": "open beads"
+  }
+}

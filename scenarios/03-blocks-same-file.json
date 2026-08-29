@@ -1,0 +1,44 @@
+{
+  "id": "blocks-same-file",
+  "title": "Same file with a real blocks edge",
+  "description": "B waits on A. Ready width 1, so they never run together. File is A then B. Contrast with overlap-exclusive: no AM conflict expected.",
+  "prefix": "blk",
+  "epic": { "title": "[lab] shared file serialized by blocks" },
+  "harness": "swarm",
+  "run": {
+    "wave_size": 1,
+    "max_waves": 2,
+    "stagger_seconds": 0
+  },
+  "beads": [
+    {
+      "key": "a",
+      "title": "append A to files/shared.txt",
+      "files": ["files/shared.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "A"
+    },
+    {
+      "key": "b",
+      "title": "append B to files/shared.txt",
+      "files": ["files/shared.txt"],
+      "mode": "append",
+      "lease": "exclusive",
+      "payload": "B"
+    }
+  ],
+  "deps": [["b", "a"]],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "am_conflicts_max": 0,
+    "files": {
+      "files/shared.txt": {
+        "line_count": 2,
+        "contains": ["A", "B"],
+        "startswith": "A"
+      }
+    }
+  }
+}

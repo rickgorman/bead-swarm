@@ -1,0 +1,10 @@
+.beads/*.db
+.beads/*.db-shm
+.beads/*.db-wal
+__pycache__/
+.pytest_cache/
+.venv/
+tmp/
+*.pyc
+.DS_Store
+/tmp/
