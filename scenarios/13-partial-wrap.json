@@ -1,0 +1,26 @@
+{
+  "id": "partial-wrap",
+  "title": "Alpha slice finishes; beta is still claimed; program stays open",
+  "description": "Close-eligible closes the done slice only. A foreign actor holds beta's first bead.",
+  "prefix": "pwr",
+  "epic": { "title": "[lab] program partial wrap" },
+  "harness": "partial-wrap",
+  "run": { "wave_size": 1, "max_waves": 4, "stagger_seconds": 0 },
+  "slices": [
+    {
+      "key": "alpha",
+      "title": "[lab] slice alpha",
+      "beads": [
+        { "key": "a1", "title": "write files/a1.txt", "files": ["files/a1.txt"], "mode": "write", "payload": "A1" }
+      ]
+    },
+    {
+      "key": "beta",
+      "title": "[lab] slice beta",
+      "beads": [
+        { "key": "b1", "title": "write files/b1.txt", "files": ["files/b1.txt"], "mode": "write", "payload": "B1" }
+      ]
+    }
+  ],
+  "expect": { "ready_width": 2, "closed_epic": false }
+}

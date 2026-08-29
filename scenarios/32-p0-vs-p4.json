@@ -1,0 +1,14 @@
+{
+  "id": "p0-vs-p4",
+  "title": "P0 and P4 both ready; --once wave-size 1 takes one, full run takes both",
+  "description": "Maps whatever bd ready actually returns first. Both files exist after a full drain.",
+  "prefix": "pri",
+  "epic": { "title": "[lab] priority" },
+  "harness": "priority-once",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0, "once": true },
+  "beads": [
+    { "key": "low", "title": "write files/low.txt", "files": ["files/low.txt"], "mode": "write", "payload": "LOW", "priority": "4" },
+    { "key": "high", "title": "write files/high.txt", "files": ["files/high.txt"], "mode": "write", "payload": "HIGH", "priority": "0" }
+  ],
+  "expect": { "ready_width": 2, "closed_epic": true }
+}

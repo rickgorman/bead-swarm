@@ -16,6 +16,7 @@ Never invoke this from inside a wave (BEAD_SWARM_WAVE is set) — that forks.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import shutil
@@ -599,10 +600,21 @@ def am_register_launcher(project: str, timeout: int) -> None:
         raise SystemExit(f"am agents register failed: {result.stderr.strip() or result.stdout.strip()}")
 
 
+_LAUNCHER_LOCK_FD = None
+
+
 def am_lock_launcher(project: str, timeout: int) -> None:
+    global _LAUNCHER_LOCK_FD
     lock_path = os.path.join(project, "tmp", "bead-swarm", "launcher.lock")
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     Path(lock_path).touch()
+    fd = os.open(lock_path, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise SystemExit("another bead-swarm launcher holds tmp/bead-swarm/launcher.lock")
+    _LAUNCHER_LOCK_FD = fd
     argv = [
         am_bin(),
         "file_reservations",

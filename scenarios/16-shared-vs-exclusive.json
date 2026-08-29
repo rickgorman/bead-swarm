@@ -1,0 +1,21 @@
+{
+  "id": "shared-vs-exclusive",
+  "title": "Shared reader holds seed.txt; exclusive writer waits",
+  "description": "Live lock upgrade. Reader copies SEED under a shared lease; writer exclusive-overwrites after the reader releases.",
+  "prefix": "svx",
+  "epic": { "title": "[lab] shared vs exclusive" },
+  "harness": "shared-vs-exclusive",
+  "seed_files": { "files/seed.txt": "SEED\n" },
+  "beads": [
+    { "key": "reader", "title": "copy seed to files/read.txt", "files": ["files/read.txt"], "source": "files/seed.txt", "mode": "copy", "lease": "shared", "payload": "READ", "hold_seconds": 0.45 },
+    { "key": "writer", "title": "overwrite files/seed.txt", "files": ["files/seed.txt"], "mode": "write", "lease": "exclusive", "payload": "NEW" }
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "files": {
+      "files/read.txt": { "contains": ["SEED", "READ"] },
+      "files/seed.txt": { "contains": ["NEW"] }
+    }
+  }
+}

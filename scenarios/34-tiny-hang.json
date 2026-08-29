@@ -1,0 +1,13 @@
+{
+  "id": "tiny-hang",
+  "title": "Single hang bead for launcher SIGTERM tests",
+  "description": "Fixture for dual-swarm / sigterm. Not drained.",
+  "prefix": "tnh",
+  "epic": { "title": "[lab] tiny hang" },
+  "harness": "fixture",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "slow", "title": "write files/slow.txt", "files": ["files/slow.txt"], "mode": "write", "payload": "SLOW", "fault": "hang-heartbeat", "hang_seconds": 25 }
+  ],
+  "expect": { "ready_width": 1 }
+}

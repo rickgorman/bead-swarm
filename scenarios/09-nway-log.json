@@ -7,16 +7,16 @@
   "harness": "swarm",
   "run": {
     "wave_size": 1,
-    "max_waves": 6,
+    "max_waves": 2,
     "stagger_seconds": 0
   },
   "beads": [
-    { "key": "l1", "title": "append 1 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L1", "hold_seconds": 0.12 },
-    { "key": "l2", "title": "append 2 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L2", "hold_seconds": 0.12 },
-    { "key": "l3", "title": "append 3 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L3", "hold_seconds": 0.12 },
-    { "key": "l4", "title": "append 4 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L4", "hold_seconds": 0.12 },
-    { "key": "l5", "title": "append 5 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L5", "hold_seconds": 0.12 },
-    { "key": "l6", "title": "append 6 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L6", "hold_seconds": 0.12 }
+    { "key": "l1", "title": "append 1 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L1" },
+    { "key": "l2", "title": "append 2 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L2" },
+    { "key": "l3", "title": "append 3 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L3" },
+    { "key": "l4", "title": "append 4 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L4" },
+    { "key": "l5", "title": "append 5 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L5" },
+    { "key": "l6", "title": "append 6 to files/log.txt", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L6" }
   ],
   "expect": {
     "ready_width": 6,

@@ -1,0 +1,22 @@
+{
+  "id": "relates",
+  "title": "relates_to must not shrink ready width",
+  "description": "A and B are related, not blocked. Both ready, both complete.",
+  "prefix": "rel",
+  "epic": { "title": "[lab] relates_to" },
+  "harness": "swarm",
+  "run": { "wave_size": 1, "max_waves": 2, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "a", "title": "write files/a.txt", "files": ["files/a.txt"], "mode": "write", "payload": "A" },
+    { "key": "b", "title": "write files/b.txt", "files": ["files/b.txt"], "mode": "write", "payload": "B" }
+  ],
+  "relates": [["a", "b"]],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "files": {
+      "files/a.txt": { "contains": ["A"] },
+      "files/b.txt": { "contains": ["B"] }
+    }
+  }
+}

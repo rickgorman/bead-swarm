@@ -7,7 +7,7 @@
   "harness": "swarm",
   "run": {
     "wave_size": 1,
-    "max_waves": 3,
+    "max_waves": 2,
     "stagger_seconds": 0
   },
   "beads": [

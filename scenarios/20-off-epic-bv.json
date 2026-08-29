@@ -1,0 +1,21 @@
+{
+  "id": "off-epic-bv",
+  "title": "bv recommends a distractor; worker only claims the allowed id",
+  "description": "Fake bv-robot-next returns the extra-epic bead. Allowed list is only a1.",
+  "prefix": "obv",
+  "epic": { "title": "[lab] on-epic work" },
+  "harness": "off-epic-bv",
+  "beads": [
+    { "key": "a1", "title": "write files/a1.txt", "files": ["files/a1.txt"], "mode": "write", "payload": "A1" }
+  ],
+  "extra_epics": [
+    {
+      "key": "shiny",
+      "title": "[lab] distractor epic",
+      "beads": [
+        { "key": "shiny1", "title": "write files/shiny.txt", "files": ["files/shiny.txt"], "mode": "write", "payload": "SHINY" }
+      ]
+    }
+  ],
+  "expect": { "ready_width": 2, "closed_epic": false }
+}

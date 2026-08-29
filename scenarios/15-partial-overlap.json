@@ -1,0 +1,24 @@
+{
+  "id": "partial-overlap",
+  "title": "A and B share shared.txt; C is disjoint",
+  "description": "Path-granular overlap. C should not wait on the hotspot. A and B both land on shared.txt.",
+  "prefix": "pov",
+  "epic": { "title": "[lab] partial overlap" },
+  "harness": "swarm",
+  "run": { "wave_size": 1, "max_waves": 3, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "a", "title": "write foo and append shared", "files": ["files/foo.txt", "files/shared.txt"], "mode": "append", "lease": "exclusive", "payload": "A" },
+    { "key": "b", "title": "write bar and append shared", "files": ["files/bar.txt", "files/shared.txt"], "mode": "append", "lease": "exclusive", "payload": "B" },
+    { "key": "c", "title": "write files/baz.txt", "files": ["files/baz.txt"], "mode": "write", "payload": "C" }
+  ],
+  "expect": {
+    "ready_width": 3,
+    "closed_epic": true,
+    "files": {
+      "files/foo.txt": { "contains": ["A"] },
+      "files/bar.txt": { "contains": ["B"] },
+      "files/baz.txt": { "contains": ["C"] },
+      "files/shared.txt": { "line_count": 2, "contains": ["A", "B"] }
+    }
+  }
+}

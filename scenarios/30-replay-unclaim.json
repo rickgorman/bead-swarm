@@ -1,0 +1,16 @@
+{
+  "id": "replay-unclaim",
+  "title": "Replay the same bead after unclaim; write is idempotent",
+  "description": "First worker skip-close after write. Unclaim. Second worker overwrites the same line. Oracle: one line.",
+  "prefix": "rpl",
+  "epic": { "title": "[lab] replay after unclaim" },
+  "harness": "replay-unclaim",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "line_count": 1, "contains": ["ONLY"] } }
+  }
+}

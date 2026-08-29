@@ -1,0 +1,10 @@
+{
+  "id": "once-vs-recycle",
+  "title": "--once stops after the first layer; a second full run finishes",
+  "description": "Layered 4 beads width 2. --once with two waves of 1 closes layer 1 only.",
+  "prefix": "onc",
+  "generate": { "kind": "layered", "count": 4, "width": 2 },
+  "harness": "once-then-full",
+  "run": { "wave_size": 1, "max_waves": 2, "stagger_seconds": 0, "once": true },
+  "expect": { "ready_width": 2, "closed_epic": true, "file_count": 4 }
+}

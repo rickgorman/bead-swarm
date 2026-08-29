@@ -1,0 +1,16 @@
+{
+  "id": "crash-after-write",
+  "title": "SIGKILL after write, before release and close",
+  "description": "File good, lease maybe held, bead in_progress. Scavenger closes on oracle and releases.",
+  "prefix": "caw",
+  "epic": { "title": "[lab] crash after write" },
+  "harness": "scavenge-complete-kill",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "line_count": 1, "contains": ["ONLY"] } }
+  }
+}

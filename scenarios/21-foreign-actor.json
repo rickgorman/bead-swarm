@@ -1,0 +1,13 @@
+{
+  "id": "foreign-actor",
+  "title": "Bead already claimed by OtherFox; swarm does not steal",
+  "description": "ready --unassigned is empty. Swarm exits 1 with the epic open.",
+  "prefix": "for",
+  "epic": { "title": "[lab] foreign claim" },
+  "harness": "foreign-actor",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": { "ready_width": 1, "closed_epic": false, "exit_code": 1 }
+}

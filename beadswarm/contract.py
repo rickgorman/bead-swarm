@@ -52,6 +52,10 @@ def normalize(data: dict[str, Any], shown: dict[str, Any] | None = None) -> dict
         "close": bool(data.get("close", True)),
         "hold_seconds": float(data.get("hold_seconds") or 0),
         "labels": labels,
+        "fault": str(data.get("fault") or ""),
+        "heartbeat": bool(data.get("heartbeat", True)),
+        "hang_seconds": float(data.get("hang_seconds") or 0),
+        "gate": data.get("gate") or "",
     }
 
 

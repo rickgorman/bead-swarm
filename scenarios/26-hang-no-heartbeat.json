@@ -1,0 +1,12 @@
+{
+  "id": "hang-no-heartbeat",
+  "title": "Live hang without heartbeat refresh; pid still wins",
+  "description": "Wedged-looking agent: no heartbeat ticks, but pid is alive. Default: do not steal.",
+  "prefix": "hnh",
+  "epic": { "title": "[lab] hang without heartbeat" },
+  "harness": "hang-no-steal",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": { "ready_width": 1, "closed_epic": false }
+}

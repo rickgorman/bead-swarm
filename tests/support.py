@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -52,6 +51,8 @@ def isolated_env(tmp: Path, extra: dict[str, str] | None = None) -> dict[str, st
     env["BEAD_SWARM_GROK_BIN"] = str(tmp / "no-such-grok")
     env["BEAD_SWARM_CURSOR_BIN"] = str(tmp / "no-such-cursor")
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    env.setdefault("BEAD_SWARM_SKIP_BV", "1")
+    env.setdefault("BEAD_SWARM_RESERVE_SECONDS", "45")
     if extra:
         env.update(extra)
     return env
@@ -96,7 +97,7 @@ def run_cmd(
     )
 
 
-def run_swarm(lab: Path, env: dict[str, str], meta: dict[str, Any], extra_args: list[str] | None = None) -> subprocess.CompletedProcess[str]:
+def swarm_argv(lab: Path, meta: dict[str, Any], extra_args: list[str] | None = None, *, apply_run: bool = True) -> list[str]:
     run = meta.get("run") or {}
     argv = [
         str(BIN / "bead-swarm"),
@@ -118,7 +119,44 @@ def run_swarm(lab: Path, env: dict[str, str], meta: dict[str, Any], extra_args: 
     ]
     if extra_args:
         argv.extend(extra_args)
-    return run_cmd(argv, cwd=lab, env=env, timeout=180)
+    if apply_run and run.get("once"):
+        argv.append("--once")
+    if apply_run and run.get("no_am"):
+        argv.append("--no-am")
+    return argv
+
+
+def run_swarm(
+    lab: Path,
+    env: dict[str, str],
+    meta: dict[str, Any],
+    extra_args: list[str] | None = None,
+    *,
+    apply_run: bool = True,
+    timeout: int = 180,
+) -> subprocess.CompletedProcess[str]:
+    return run_cmd(swarm_argv(lab, meta, extra_args, apply_run=apply_run), cwd=lab, env=env, timeout=timeout)
+
+
+def start_swarm(
+    lab: Path,
+    env: dict[str, str],
+    meta: dict[str, Any],
+    extra_args: list[str] | None = None,
+) -> subprocess.Popen[str]:
+    log_path = lab / "tmp" / "bead-swarm" / "launcher-foreground.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(log_path, "w")
+    proc = subprocess.Popen(
+        swarm_argv(lab, meta, extra_args),
+        cwd=lab,
+        env=env,
+        stdout=handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._bead_swarm_log = handle  # type: ignore[attr-defined]
+    return proc
 
 
 def allowed_prompt(bead_ids: list[str]) -> str:
@@ -130,19 +168,18 @@ def allowed_prompt(bead_ids: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def run_worker(
+def worker_argv(
     lab: Path,
-    env: dict[str, str],
     bead_ids: list[str],
     *,
     wave: int = 1,
     abandon: bool = False,
-) -> subprocess.CompletedProcess[str]:
+    fault: str = "",
+    hang_seconds: float | None = None,
+) -> list[str]:
     prompt_path = lab / "tmp" / "bead-swarm" / f"manual-wave-{wave}.prompt.md"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
     prompt_path.write_text(allowed_prompt(bead_ids))
-    worker_env = dict(env)
-    worker_env["BEAD_SWARM_WAVE"] = str(wave)
     argv = [
         str(BIN / "bead-swarm-lab-worker"),
         "--prompt-file",
@@ -152,7 +189,71 @@ def run_worker(
     ]
     if abandon:
         argv.append("--abandon")
-    return run_cmd(argv, cwd=lab, env=worker_env, timeout=60)
+    if fault:
+        argv.extend(["--fault", fault])
+    if hang_seconds is not None:
+        argv.extend(["--hang-seconds", str(hang_seconds)])
+    return argv
+
+
+def run_worker(
+    lab: Path,
+    env: dict[str, str],
+    bead_ids: list[str],
+    *,
+    wave: int = 1,
+    abandon: bool = False,
+    fault: str = "",
+    hang_seconds: float | None = None,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess[str]:
+    worker_env = dict(env)
+    worker_env["BEAD_SWARM_WAVE"] = str(wave)
+    argv = worker_argv(
+        lab, bead_ids, wave=wave, abandon=abandon, fault=fault, hang_seconds=hang_seconds
+    )
+    return run_cmd(argv, cwd=lab, env=worker_env, timeout=timeout)
+
+
+def start_worker(
+    lab: Path,
+    env: dict[str, str],
+    bead_ids: list[str],
+    *,
+    wave: int = 1,
+    abandon: bool = False,
+    fault: str = "",
+    hang_seconds: float | None = None,
+) -> subprocess.Popen[str]:
+    worker_env = dict(env)
+    worker_env["BEAD_SWARM_WAVE"] = str(wave)
+    argv = worker_argv(
+        lab, bead_ids, wave=wave, abandon=abandon, fault=fault, hang_seconds=hang_seconds
+    )
+    log_path = lab / "tmp" / "bead-swarm" / f"manual-wave-{wave}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(log_path, "w")
+    proc = subprocess.Popen(
+        argv,
+        cwd=lab,
+        env=worker_env,
+        stdout=handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._bead_swarm_log = handle  # type: ignore[attr-defined]
+    return proc
+
+
+def wait_until(pred, *, timeout: float = 8.0, interval: float = 0.05) -> bool:
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if pred():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def show_status(lab: Path, issue_id: str, env: dict[str, str]) -> str:

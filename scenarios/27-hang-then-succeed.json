@@ -1,0 +1,16 @@
+{
+  "id": "hang-then-succeed",
+  "title": "Hang (thinking), scavenger skips, then the agent finishes",
+  "description": "Regression for quiet-files steal. One line, one closer.",
+  "prefix": "hts",
+  "epic": { "title": "[lab] hang then succeed" },
+  "harness": "hang-then-succeed",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "line_count": 1, "contains": ["ONLY"] } }
+  }
+}

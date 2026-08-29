@@ -4,13 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from beadswarm import amutil, events
+from beadswarm import amutil, events, heartbeat
 from beadswarm.contract import parse_contract
 
 AGENT_NAMES = ("BlueLake", "CoralPeak", "JadeFox", "IvoryOwl", "AmberFox", "ScarletCave")
@@ -69,6 +70,24 @@ def apply_mode(project: Path, bead_id: str, contract: dict[str, Any]) -> list[Pa
     written: list[Path] = []
     payload = contract.get("payload") or bead_id
     mode = contract["mode"]
+    if mode == "rmw-append":
+        gate = contract.get("gate")
+        if gate:
+            deadline = time.time() + 10
+            while time.time() < deadline and not (project / str(gate)).exists():
+                time.sleep(0.02)
+        hold = float(contract.get("hold_seconds") or 0)
+        for rel in contract["files"]:
+            path = project / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            current = path.read_text() if path.is_file() else ""
+            if hold:
+                time.sleep(hold)
+            line = f"{payload} {bead_id} {rel}\n"
+            path.write_text(current + line)
+            written.append(path)
+        contract["hold_seconds"] = 0
+        return written
     if mode in ("write", "append"):
         for rel in contract["files"]:
             path = project / rel
@@ -118,7 +137,7 @@ def reserve_with_retry(
     if contract["lease"] == "none":
         return
     exclusive = contract["lease"] != "shared"
-    deadline = time.time() + 20
+    deadline = time.time() + float(os.environ.get("BEAD_SWARM_RESERVE_SECONDS") or "45")
     while True:
         parsed = amutil.reserve(
             project,
@@ -147,14 +166,66 @@ def reserve_with_retry(
         raise SystemExit(f"am reserve failed: {parsed['raw']}")
 
 
-def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool) -> None:
+def die_now() -> None:
+    os.kill(os.getpid(), signal.SIGKILL)
+
+
+def bv_next(cwd: Path) -> str | None:
+    if os.environ.get("BEAD_SWARM_SKIP_BV", "1") == "1":
+        return None
+    env = command_env()
+    env.setdefault("BV_ROBOT_NOT_READY_LABELS", "verify:recon")
+    # Never bare `bv` — that launches a TUI. Robot wrapper only.
+    for argv in (
+        ["bv-robot-next", "-f", "json"],
+        ["bv", "--robot-next", "-f", "json", "--no-cache"],
+    ):
+        try:
+            result = subprocess.run(argv, cwd=cwd, text=True, capture_output=True, env=env)
+        except OSError:
+            continue
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and payload.get("actionable") is False:
+            return None
+        if isinstance(payload, dict) and payload.get("id"):
+            return str(payload["id"])
+    return None
+
+
+def hang_loop(project: Path, bead_id: str, agent: str, contract: dict[str, Any]) -> None:
+    deadline = time.time() + float(contract.get("hang_seconds") or 3600)
+    while time.time() < deadline:
+        if contract.get("heartbeat", True):
+            heartbeat.write(project, bead_id, agent)
+        time.sleep(0.08)
+
+
+def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool, fault: str) -> None:
     shown = show_bead(project, bead_id)
     contract = parse_contract(shown)
+    if fault:
+        contract["fault"] = fault
+    fault = str(contract.get("fault") or "")
     if abandon:
         contract["close"] = False
         contract["release"] = False
         contract["hold_seconds"] = contract["hold_seconds"] or 0.4
         contract["ttl"] = min(int(contract["ttl"]), 2)
+    if fault == "skip-close":
+        contract["close"] = False
+    if fault == "skip-release":
+        contract["release"] = False
+    if fault == "no-heartbeat":
+        contract["heartbeat"] = False
+    if os.environ.get("BEAD_SWARM_LAB_HANG_SECONDS"):
+        contract["hang_seconds"] = float(os.environ["BEAD_SWARM_LAB_HANG_SECONDS"])
+
+    heartbeat.write(project, bead_id, agent)
 
     leases: list[tuple[str, str]] = []
     for rel in contract["files"]:
@@ -180,8 +251,26 @@ def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool) -> N
         tagged["lease"] = kind
         reserve_with_retry(project, agent, rel, tagged, bead_id)
 
+    if fault == "die-after-reserve":
+        die_now()
+    if fault in ("hang-heartbeat", "hang", "hang-no-heartbeat"):
+        if fault == "hang-no-heartbeat":
+            contract["heartbeat"] = False
+        hang_loop(project, bead_id, agent, contract)
+        events.emit(project, "held", bead=bead_id, files=[])
+        return
+    if fault == "hang-then-succeed":
+        hang_loop(project, bead_id, agent, contract)
+    if fault == "skip-write":
+        events.emit(project, "held", bead=bead_id, files=[])
+        return
+
     written = apply_mode(project, bead_id, contract)
+    if fault == "die-after-write":
+        die_now()
     if contract["hold_seconds"]:
+        if contract.get("heartbeat", True):
+            heartbeat.write(project, bead_id, agent)
         time.sleep(contract["hold_seconds"])
 
     if contract["release"]:
@@ -203,6 +292,8 @@ def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool) -> N
     )
     events.emit(project, "closed", bead=bead_id, files=rels)
     print(f"closed {bead_id} -> {', '.join(rels)}", flush=True)
+    if fault == "die-after-close":
+        die_now()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -210,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prompt-file")
     parser.add_argument("--project", default=os.getcwd())
     parser.add_argument("--abandon", action="store_true")
+    parser.add_argument("--fault", default=os.environ.get("BEAD_SWARM_LAB_FAULT", ""))
+    parser.add_argument("--hang-seconds", type=float, default=None)
     parser.add_argument("prompt", nargs="?", default="")
     args, _unknown = parser.parse_known_args(argv)
     project = Path(args.project).resolve()
@@ -226,7 +319,11 @@ def main(argv: list[str] | None = None) -> int:
 
     remaining = list(allowed)
     while remaining:
-        bead_id = remaining[0]
+        pick = bv_next(project)
+        if pick and pick not in remaining:
+            events.emit(project, "off-epic-bv", pick=pick, allowed=list(remaining))
+            print(f"off-epic-bv: {pick}", flush=True)
+        bead_id = pick if pick in remaining else remaining[0]
         claim = subprocess.run(
             [br_bin(), "update", bead_id, "--claim", "--actor", agent, "--json"],
             cwd=project,
@@ -242,9 +339,14 @@ def main(argv: list[str] | None = None) -> int:
             remaining.remove(bead_id)
             continue
         events.emit(project, "claimed", bead=bead_id, agent=agent)
-        process_bead(project, agent, bead_id, abandon=args.abandon)
+        if args.fault == "die-after-claim":
+            die_now()
+        contract_hang = {}
+        if args.hang_seconds is not None:
+            os.environ["BEAD_SWARM_LAB_HANG_SECONDS"] = str(args.hang_seconds)
+        process_bead(project, agent, bead_id, abandon=args.abandon, fault=args.fault)
         remaining.remove(bead_id)
-        if args.abandon:
+        if args.abandon or args.fault.startswith("hang"):
             break
 
     print("WAVE_DONE", flush=True)

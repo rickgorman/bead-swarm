@@ -1,0 +1,17 @@
+{
+  "id": "no-am-rmw",
+  "title": "Two rmw-appends without AM lose an update",
+  "description": "Negative. Both workers read empty, sleep, write their own line. Last writer wins. Proves AM was load-bearing in 01.",
+  "prefix": "nam",
+  "epic": { "title": "[lab] no-am lost update" },
+  "harness": "dual-worker-rmw",
+  "beads": [
+    { "key": "a", "title": "rmw-append A", "files": ["files/shared.txt"], "mode": "rmw-append", "lease": "none", "payload": "A", "hold_seconds": 0.3, "gate": "tmp/bead-swarm/rmw.gate" },
+    { "key": "b", "title": "rmw-append B", "files": ["files/shared.txt"], "mode": "rmw-append", "lease": "none", "payload": "B", "hold_seconds": 0.3, "gate": "tmp/bead-swarm/rmw.gate" }
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": false,
+    "files": { "files/shared.txt": { "line_count": 1 } }
+  }
+}

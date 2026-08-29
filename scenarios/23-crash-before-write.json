@@ -1,0 +1,16 @@
+{
+  "id": "crash-before-write",
+  "title": "SIGKILL after claim+reserve, before write",
+  "description": "File missing, lease held, in_progress. Scavenger requeues. Second worker writes once.",
+  "prefix": "cbw",
+  "epic": { "title": "[lab] crash before write" },
+  "harness": "scavenge-incomplete",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "contains": ["ONLY"] } }
+  }
+}

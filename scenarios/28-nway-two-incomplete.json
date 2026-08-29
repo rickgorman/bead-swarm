@@ -1,0 +1,22 @@
+{
+  "id": "nway-two-incomplete",
+  "title": "Four log beads close; two write and never close",
+  "description": "Epic stays open. Scavenger closes the two complete-oracle corpses, then wrap.",
+  "prefix": "n2i",
+  "epic": { "title": "[lab] nway two incomplete" },
+  "harness": "nway-incomplete",
+  "run": { "wave_size": 1, "max_waves": 2, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "l1", "title": "append 1", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L1" },
+    { "key": "l2", "title": "append 2", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L2" },
+    { "key": "l3", "title": "append 3", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L3" },
+    { "key": "l4", "title": "append 4", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L4" },
+    { "key": "l5", "title": "append 5 never close", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L5", "fault": "skip-close" },
+    { "key": "l6", "title": "append 6 never close", "files": ["files/log.txt"], "mode": "append", "lease": "exclusive", "payload": "L6", "fault": "skip-close" }
+  ],
+  "expect": {
+    "ready_width": 6,
+    "closed_epic": true,
+    "files": { "files/log.txt": { "line_count": 6, "contains": ["L1", "L2", "L3", "L4", "L5", "L6"] } }
+  }
+}

@@ -22,6 +22,20 @@ Baseline plus overlap, then ten more combinations of dependencies, parallelism, 
 | 09 | `nway-log` | Six parallel exclusive appends to `files/log.txt`. No lost lines. |
 | 10 | `nested-epics` | Program → two slices, cross-slice overlap, close-eligible inside-out. |
 | 11 | `cycle-trap` | `bd` rejects A↔B. A stuck `in_progress` blocker leaves ready empty; swarm exits 1 and does not wrap. |
+| 12 | `two-epics-leak` | Two programs in one db. `--epic A` must not claim or close B. |
+| 13 | `partial-wrap` | Alpha slice done, beta still claimed. Only alpha closes. |
+| 14 | `diamond` | A → B,C → D. Ready 1 then 2 then 1. |
+| 15 | `partial-overlap` | A/B share one file; C is disjoint. |
+| 16 | `shared-vs-exclusive` | Shared reader holds seed; exclusive writer waits. |
+| 17 | `no-am-rmw` | Negative: two rmw-appends without AM lose an update. |
+| 18 | `second-launcher` | Second process flocks `launcher.lock` and bounces. |
+| 19 | `once-vs-recycle` | `--once` leaves layer 2; a second full run finishes. |
+| 20 | `off-epic-bv` | Fake `bv` recommends a distractor; worker only claims the allowed id. |
+| 21 | `foreign-actor` | OtherFox holds the claim. Swarm does not steal. |
+| 22–30 | crash/hang | Finish-without-close, SIGKILL before/after write, live hang (with and without heartbeat), hang-then-succeed, two incomplete log beads, close-without-release, idempotent replay. |
+| 31 | `relates` | `relates_to` must not shrink ready width. |
+| 32 | `p0-vs-p4` | Both priorities ready; `--once` takes one; full run takes both. |
+| 33 | `idempotent-rerun` | Second swarm on a closed epic is a no-op. |
 
 ## Surprises the tests pin
 

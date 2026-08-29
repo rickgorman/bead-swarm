@@ -1,0 +1,26 @@
+{
+  "id": "two-epics-leak",
+  "title": "Two programs in one db; --epic A must not touch B",
+  "description": "Scoped wrap and ready filtering. Swarming A must leave B and B's child open.",
+  "prefix": "2ep",
+  "epic": { "title": "[lab] program A" },
+  "harness": "swarm",
+  "run": { "wave_size": 1, "max_waves": 2, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "a1", "title": "write files/a1.txt", "files": ["files/a1.txt"], "mode": "write", "payload": "A1" }
+  ],
+  "extra_epics": [
+    {
+      "key": "other",
+      "title": "[lab] program B",
+      "beads": [
+        { "key": "b1", "title": "write files/b1.txt", "files": ["files/b1.txt"], "mode": "write", "payload": "B1" }
+      ]
+    }
+  ],
+  "expect": {
+    "ready_width": 2,
+    "closed_epic": true,
+    "files": { "files/a1.txt": { "contains": ["A1"] } }
+  }
+}

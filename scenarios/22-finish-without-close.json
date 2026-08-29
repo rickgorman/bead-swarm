@@ -1,0 +1,16 @@
+{
+  "id": "finish-without-close",
+  "title": "Agent writes the file and never closes the bead",
+  "description": "Oracle is green; graph still in_progress. Scavenger closes on complete oracle, must not rewrite.",
+  "prefix": "fwc",
+  "epic": { "title": "[lab] finish without close" },
+  "harness": "scavenge-complete",
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY", "fault": "skip-close" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "line_count": 1, "contains": ["ONLY"] } }
+  }
+}

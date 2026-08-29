@@ -1,0 +1,18 @@
+{
+  "id": "close-without-release",
+  "title": "Bead closed but AM exclusive lease still held",
+  "description": "Graph looks done; next writer on the path conflicts until scavenger/release uses the holder name.",
+  "prefix": "cwr",
+  "epic": { "title": "[lab] close without release" },
+  "harness": "close-without-release",
+  "beads": [
+    { "key": "first", "title": "append FIRST", "files": ["files/shared.txt"], "mode": "append", "lease": "exclusive", "payload": "FIRST", "fault": "skip-release" },
+    { "key": "second", "title": "append SECOND", "files": ["files/shared.txt"], "mode": "append", "lease": "exclusive", "payload": "SECOND" }
+  ],
+  "deps": [["second", "first"]],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/shared.txt": { "line_count": 2, "contains": ["FIRST", "SECOND"] } }
+  }
+}

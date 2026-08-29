@@ -1,0 +1,17 @@
+{
+  "id": "idempotent-rerun",
+  "title": "Second swarm on an already-closed epic is a no-op",
+  "description": "First run wraps. Second run frontier dry, epic stays closed, no extra file lines.",
+  "prefix": "idr",
+  "epic": { "title": "[lab] idempotent rerun" },
+  "harness": "idempotent-rerun",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "only", "title": "write files/only.txt", "files": ["files/only.txt"], "mode": "write", "payload": "ONLY" }
+  ],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": true,
+    "files": { "files/only.txt": { "line_count": 1, "contains": ["ONLY"] } }
+  }
+}

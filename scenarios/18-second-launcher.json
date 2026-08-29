@@ -1,0 +1,14 @@
+{
+  "id": "second-launcher",
+  "title": "Second swarm on the same cwd bounces on launcher.lock",
+  "description": "Hang one bead so the first launcher stays up. Second process must see the AM exclusive conflict.",
+  "prefix": "2ln",
+  "epic": { "title": "[lab] second launcher" },
+  "harness": "dual-swarm",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0 },
+  "beads": [
+    { "key": "slow1", "title": "write files/slow1.txt", "files": ["files/slow1.txt"], "mode": "write", "payload": "SLOW1", "fault": "hang-heartbeat", "hang_seconds": 20 },
+    { "key": "slow2", "title": "write files/slow2.txt", "files": ["files/slow2.txt"], "mode": "write", "payload": "SLOW2", "fault": "hang-heartbeat", "hang_seconds": 20 }
+  ],
+  "expect": { "ready_width": 1, "closed_epic": false }
+}

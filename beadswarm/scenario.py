@@ -89,6 +89,10 @@ def bead_body(bead: dict[str, Any]) -> str:
         "release": bead.get("release", True),
         "close": bead.get("close", True),
         "hold_seconds": bead.get("hold_seconds") or 0,
+        "fault": bead.get("fault") or "",
+        "heartbeat": bead.get("heartbeat", True),
+        "hang_seconds": bead.get("hang_seconds") or 0,
+        "gate": bead.get("gate") or "",
     }
     if bead.get("source"):
         contract["source"] = bead["source"]
@@ -157,8 +161,33 @@ def materialize(spec: dict[str, Any], dest: Path, *, force: bool = False) -> dic
             bead_body(bead),
             parent=parent,
             labels=list(bead.get("labels") or []),
+            priority=str(bead.get("priority") or "1"),
         )
         keymap[bead["key"]] = bead_id
+
+    for extra in spec.get("extra_epics") or []:
+        extra_id = bd.create(
+            dest,
+            extra.get("title") or extra["key"],
+            extra.get("body") or f"Extra epic {extra['key']}",
+            issue_type="epic",
+        )
+        keymap[extra["key"]] = extra_id
+        for bead in extra.get("beads") or []:
+            bead_id = bd.create(
+                dest,
+                bead.get("title") or f"[lab] {bead['key']}",
+                bead_body(bead),
+                parent=extra_id,
+                labels=list(bead.get("labels") or []),
+                priority=str(bead.get("priority") or "1"),
+            )
+            keymap[bead["key"]] = bead_id
+
+    for rel, content in (spec.get("seed_files") or {}).items():
+        path = dest / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
 
     for blocked_key, blocker_key in spec.get("deps") or []:
         if blocked_key not in keymap or blocker_key not in keymap:
@@ -171,6 +200,9 @@ def materialize(spec: dict[str, Any], dest: Path, *, force: bool = False) -> dic
             bd.dep_add(dest, keymap[a], keymap[b])
         except SystemExit as exc:
             keymap["_cycle_error"] = str(exc)
+
+    for left, right in spec.get("relates") or []:
+        bd.run([bd.bd_bin(), "dep", "relate", keymap[left], keymap[right]], dest)
 
     ready_items = bd.ready(dest)
     ready_ids = [item["id"] for item in ready_items]
