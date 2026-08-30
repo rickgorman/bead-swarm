@@ -217,6 +217,29 @@ class ExtraScenarioTests(unittest.TestCase):
         self.assertEqual(show_status(lab, meta["epic"], env), "closed")
         assert_expect_files(lab, spec["expect"])
 
+    def test_35_future_gate_sha_is_not_claimable_when_bd_calls_it_ready(self) -> None:
+        lab, spec, meta, env, _ = self._prep("35-future-gate-sha")
+        proof_id = meta["keymap"]["proof"]
+        gate_id = meta["keymap"]["gate"]
+        candidate = lab / "tmp" / "bead-swarm" / "candidates" / "g00.sha"
+
+        self.assertEqual(meta["ready_width"], 1)
+        self.assertEqual([item["id"] for item in bd.ready(lab, env=env)], [proof_id])
+        self.assertFalse(candidate.exists(), "the absorbed G00 candidate must not exist in this setup")
+        self.assertIn(
+            "semantically not ready even when `bd ready` reports it",
+            bd.show(lab, proof_id, env=env)["description"],
+        )
+
+        result = run_swarm(lab, env, meta)
+
+        self.assertEqual(result.returncode, spec["expect"]["exit_code"], result.stdout + result.stderr)
+        self.assertEqual(show_status(lab, proof_id, env), "open")
+        self.assertEqual(show_status(lab, gate_id, env), "open")
+        self.assertEqual(show_status(lab, meta["epic"], env), "open")
+        self.assertFalse((lab / "files" / "proof.txt").exists())
+        self.assertFalse((lab / "files" / "gate.txt").exists())
+
 
 @unittest.skipUnless(_has_tools(), "bd, am, and git required")
 class CrashHangTests(unittest.TestCase):

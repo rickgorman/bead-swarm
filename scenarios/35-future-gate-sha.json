@@ -1,0 +1,36 @@
+{
+  "id": "future-gate-sha",
+  "title": "Mechanically ready proof waits for its future frozen gate SHA",
+  "description": "The proof has no graph blocker, but its own closure contract requires an absorbed candidate SHA that does not exist yet. The swarm must not claim it merely because bd ready reports it.",
+  "prefix": "fgs",
+  "epic": { "title": "[lab] future gate SHA" },
+  "harness": "future-gate-sha",
+  "run": { "wave_size": 1, "max_waves": 1, "stagger_seconds": 0 },
+  "beads": [
+    {
+      "key": "proof",
+      "title": "PROOF: absorbed occurrence identity at the G00 candidate SHA",
+      "body": "## Closure requires\n\nBefore this bead may be claimed, `tmp/bead-swarm/candidates/g00.sha` must exist and contain the exact 40-character absorbed candidate SHA. The recorded verifier SHA must equal the future G00 slice-gate SHA. If the candidate is absent, this bead is semantically not ready even when `bd ready` reports it.",
+      "files": ["files/proof.txt"],
+      "mode": "write",
+      "payload": "PROOF",
+      "priority": 0,
+      "labels": ["proof:e2e", "verify:bead", "slice:00"]
+    },
+    {
+      "key": "gate",
+      "title": "[gate] G00 contracts slice CI",
+      "body": "The gate closes only after the proof was run at the frozen absorbed candidate SHA.",
+      "files": ["files/gate.txt"],
+      "mode": "write",
+      "payload": "GATE",
+      "labels": ["verify:slice", "slice:00"]
+    }
+  ],
+  "deps": [["gate", "proof"]],
+  "expect": {
+    "ready_width": 1,
+    "closed_epic": false,
+    "exit_code": 1
+  }
+}
