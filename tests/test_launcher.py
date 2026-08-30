@@ -21,7 +21,12 @@ pair = [{"id": "leverage-a", "issue_type": "task"}, {"id": "leverage-b", "issue_
 twenty = [{"id": f"leverage-{n}", "issue_type": "task"} for n in range(20)]
 cmd = args[0] if args else ""
 if cmd == "list":
-    print(json.dumps([epic, epic20]))
+    if "--parent" in args:
+        ident = args[args.index("--parent") + 1]
+        kids = pair if ident == "leverage-epic-1" else twenty if ident == "leverage-epic-20" else []
+        print(json.dumps(kids))
+    else:
+        print(json.dumps([epic, epic20]))
 elif cmd == "show":
     ident = positional[0] if positional else ""
     found = next((item for item in [epic, epic20, *pair, *twenty] if item["id"] == ident), None)

@@ -18,11 +18,25 @@ def path_for(project: Path, bead_id: str) -> Path:
     return _dir(project) / f"{bead_id}.json"
 
 
-def write(project: Path, bead_id: str, agent: str) -> None:
+def write(
+    project: Path,
+    bead_id: str,
+    agent: str,
+    *,
+    pid: int | None = None,
+    wave_pid: int | None = None,
+) -> None:
+    wp = wave_pid
+    if wp is None and os.environ.get("BEAD_SWARM_WAVE_PID"):
+        try:
+            wp = int(os.environ["BEAD_SWARM_WAVE_PID"])
+        except ValueError:
+            wp = None
     payload = {
         "bead": bead_id,
         "agent": agent,
-        "pid": os.getpid(),
+        "pid": os.getpid() if pid is None else pid,
+        "wave_pid": wp if wp is not None else os.getppid(),
         "ts": time.time(),
     }
     path_for(project, bead_id).write_text(json.dumps(payload) + "\n")

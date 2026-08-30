@@ -123,6 +123,10 @@ def swarm_argv(lab: Path, meta: dict[str, Any], extra_args: list[str] | None = N
         argv.append("--once")
     if apply_run and run.get("no_am"):
         argv.append("--no-am")
+    if apply_run and run.get("no_scavenge"):
+        argv.append("--no-scavenge")
+    if apply_run and run.get("hung_after") is not None:
+        argv.extend(["--hung-after", str(run["hung_after"])])
     return argv
 
 
@@ -282,4 +286,14 @@ def assert_expect_files(lab: Path, expect: dict[str, Any]) -> None:
 
 
 def tmpdir() -> tempfile.TemporaryDirectory[str]:
-    return tempfile.TemporaryDirectory(prefix="bead-swarm-test-")
+    tmp = tempfile.TemporaryDirectory(prefix="bead-swarm-test-")
+    original = tmp.cleanup
+
+    def cleanup() -> None:
+        try:
+            original()
+        except OSError:
+            shutil.rmtree(tmp.name, ignore_errors=True)
+
+    tmp.cleanup = cleanup  # type: ignore[method-assign]
+    return tmp

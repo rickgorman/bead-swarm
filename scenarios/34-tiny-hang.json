@@ -1,7 +1,7 @@
 {
   "id": "tiny-hang",
   "title": "Single hang bead for launcher SIGTERM tests",
-  "description": "Fixture for dual-swarm / sigterm. Not drained.",
+  "description": "One claimed hang hides ready, so a second swarm skip-lives instead of bouncing on launcher.lock. SIGTERM the first; a third swarm can spawn. Not drained.",
   "prefix": "tnh",
   "epic": { "title": "[lab] tiny hang" },
   "harness": "fixture",

@@ -1,7 +1,7 @@
 {
   "id": "p0-vs-p4",
-  "title": "P0 and P4 both ready; --once wave-size 1 takes one, full run takes both",
-  "description": "Maps whatever bd ready actually returns first. Both files exist after a full drain.",
+  "title": "P0 and P4 both ready; --once wave-size 1 takes P0, full run takes both",
+  "description": "bd ready --sort priority (and the launcher's own sort) put P0 ahead of P4. --once writes high.txt only; a second full drain writes low.txt too.",
   "prefix": "pri",
   "epic": { "title": "[lab] priority" },
   "harness": "priority-once",

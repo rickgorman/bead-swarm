@@ -196,11 +196,13 @@ class ExtraScenarioTests(unittest.TestCase):
 
     def test_32_p0_and_p4_both_finish(self) -> None:
         lab, spec, meta, env, _ = self._prep("32-p0-vs-p4")
+        ready = bd.ready(lab, env=env)
+        self.assertEqual([item.get("priority") for item in ready], [0, 4])
+        self.assertEqual(ready[0]["id"], meta["keymap"]["high"])
         once = run_swarm(lab, env, meta)
         self.assertEqual(once.returncode, 1, once.stdout + once.stderr)
-        high = (lab / "files" / "high.txt").exists()
-        low = (lab / "files" / "low.txt").exists()
-        self.assertTrue(high != low, "exactly one of the two should run in a wave-size 1 --once")
+        self.assertTrue((lab / "files" / "high.txt").is_file(), "wave-size 1 --once must take P0")
+        self.assertFalse((lab / "files" / "low.txt").exists(), "P4 must wait until the next wave")
         full = run_swarm(lab, env, meta, apply_run=False)
         self.assertEqual(full.returncode, 0, full.stdout + full.stderr)
         self.assertTrue((lab / "files" / "high.txt").is_file())
@@ -300,12 +302,9 @@ class CrashHangTests(unittest.TestCase):
     def test_28_nway_two_incomplete_then_scavenge(self) -> None:
         lab, spec, meta, env = self._prep("28-nway-two-incomplete")
         first = run_swarm(lab, env, meta)
-        self.assertEqual(first.returncode, 1, first.stdout + first.stderr)
-        self.assertEqual(show_status(lab, meta["epic"], env), "open")
-        reports = scavenge.scavenge(lab, env=env)
-        self.assertEqual(sorted(r["action"] for r in reports), ["close", "close"])
-        wrap = run_swarm(lab, env, meta)
-        self.assertEqual(wrap.returncode, 0, wrap.stdout + wrap.stderr)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        self.assertIn("scavenge:", first.stdout)
+        self.assertEqual(show_status(lab, meta["epic"], env), "closed")
         assert_expect_files(lab, spec["expect"])
 
     def test_29_close_without_release_blocks_until_holder_release(self) -> None:

@@ -34,6 +34,7 @@ if str(_BOOT) not in sys.path:
     sys.path.insert(0, str(_BOOT))
 
 from beadswarm.home import bin_dir, bin_path, swarm_home  # noqa: E402
+from beadswarm import scavenge as scavenge_mod  # noqa: E402
 
 WAVE_SIZE_DEFAULT = 10
 MAX_WAVES_DEFAULT = 4
@@ -413,7 +414,7 @@ def descendant_ids(cwd: str, timeout: int, epic_id: str) -> set[str]:
     queue = [epic_id]
     while queue:
         parent = queue.pop(0)
-        for child in br_children(cwd, timeout, parent):
+        for child in br_all_children(cwd, timeout, parent):
             child_id = child.get("id")
             if not child_id or child_id in found:
                 continue
@@ -477,8 +478,16 @@ def resolve_epic(cwd: str, timeout: int, epic_id: str | None) -> dict[str, Any]:
     return shown
 
 
+def _priority_rank(item: dict[str, Any]) -> int:
+    value = item.get("priority")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 9
+
+
 def ready_beads(cwd: str, timeout: int, allowed_ids: set[str] | None = None) -> list[dict[str, Any]]:
-    argv = [br_bin(), "ready", "--json", "--unassigned", "--limit", "200"]
+    argv = [br_bin(), "ready", "--json", "--unassigned", "--limit", "200", "--sort", "priority"]
     result = run_cmd(argv, timeout=timeout, cwd=cwd)
     if result.returncode != 0:
         raise SystemExit(f"br ready failed: {result.stderr.strip() or result.stdout.strip()}")
@@ -489,6 +498,7 @@ def ready_beads(cwd: str, timeout: int, allowed_ids: set[str] | None = None) -> 
         if allowed_ids is not None and item.get("id") not in allowed_ids:
             continue
         beads.append(item)
+    beads.sort(key=lambda item: (_priority_rank(item), item.get("id") or ""))
     return beads
 
 
@@ -573,6 +583,10 @@ def finish_tree(cwd: str, timeout: int, epic_id: str) -> int:
         return 1
     if epics:
         print(f"tasks done but {len(epics)} epic(s) remain open", flush=True)
+        return 1
+    root = br_show(cwd, timeout, epic_id)
+    if root is not None and (root.get("status") or "") != "closed":
+        print("tasks done but epic remains open", flush=True)
         return 1
     print("frontier dry")
     return 0
@@ -669,6 +683,7 @@ def spawn_wave(
     env["BEAD_SWARM_WAVE"] = str(wave_index)
     env["BEAD_SWARM_WAVE_SIZE"] = str(wave_size)
     env["BEAD_SWARM_SEAT"] = seat.id
+    env["BEAD_SWARM_WAVE_PID"] = str(os.getpid())
     log_path = log_dir / f"wave-{wave_index}.log"
     log_handle = open(log_path, "w")
     proc = subprocess.Popen(
@@ -723,6 +738,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--epic", help="Epic id to empty (required unless stdin is a TTY picker)")
     parser.add_argument("--lab", action="store_true", help="Spawn the deterministic lab worker instead of an LLM harness")
     parser.add_argument("--cwd", default=os.getcwd())
+    parser.add_argument("--no-scavenge", action="store_true", help="Do not classify in_progress corpses when ready is empty")
+    parser.add_argument(
+        "--hung-after",
+        type=float,
+        default=None,
+        help="Seconds after which a live pid with a stale heartbeat is stolen (opt-in)",
+    )
     return parser.parse_args(argv)
 
 
@@ -751,7 +773,29 @@ def main(argv: list[str] | None = None) -> int:
     if probe.seat is None:
         return 1
 
+    def run_scavenge() -> None:
+        if args.no_scavenge or args.dry_run:
+            return
+        try:
+            reports = scavenge_mod.scavenge(
+                Path(project),
+                max_age=args.hung_after or 2.0,
+                hung_after=args.hung_after,
+                env=command_env(),
+            )
+        except (SystemExit, OSError, json.JSONDecodeError) as exc:
+            print(f"scavenge skipped: {exc}", flush=True)
+            return
+        if not reports:
+            return
+        summary = ", ".join(f"{r['bead']}:{r['action']}" for r in reports)
+        print(f"scavenge: {summary}", flush=True)
+
     beads = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+    if not beads and not args.dry_run and not args.no_scavenge:
+        run_scavenge()
+        allowed = descendant_ids(project, args.probe_timeout, epic_id)
+        beads = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
     ready_count = len(beads)
     print(f"ready (non-epic, this epic): {ready_count}", flush=True)
     if ready_count == 0:
@@ -798,21 +842,22 @@ def main(argv: list[str] | None = None) -> int:
         next_wave += 1
         spawned_this_round += 1
 
-    while children:
-        wait_one(children)
-        close_eligible_in_tree(project, args.probe_timeout, epic_id)
-        if args.once:
-            continue
-        allowed = descendant_ids(project, args.probe_timeout, epic_id)
-        remaining = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+    def spawn_from_ready() -> bool:
+        nonlocal next_wave, probe
+        if args.once or len(children) >= args.max_waves or probe.seat is None:
+            return False
+        allowed_now = descendant_ids(project, args.probe_timeout, epic_id)
+        remaining = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed_now)
         if not remaining:
-            continue
-        if len(children) >= args.max_waves:
-            continue
-        probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=False, pin=args.seat)
-        if probe.seat is None:
-            announce_seat(probe)
-            break
+            run_scavenge()
+            remaining = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed_now)
+        if not remaining or len(children) >= args.max_waves:
+            return False
+        nxt = choose_seat(seats, timeout=args.probe_timeout, reprobe=False, pin=args.seat)
+        if nxt.seat is None:
+            announce_seat(nxt)
+            return False
+        probe = nxt
         if args.stagger_seconds > 0:
             time.sleep(args.stagger_seconds)
         assigned = [item["id"] for item in remaining[: args.wave_size] if item.get("id")]
@@ -820,6 +865,27 @@ def main(argv: list[str] | None = None) -> int:
             probe.seat, next_wave, args.wave_size, project, log_dir, epic_id, assigned
         )
         next_wave += 1
+        return True
+
+    while children:
+        wait_one(children)
+        close_eligible_in_tree(project, args.probe_timeout, epic_id)
+        spawn_from_ready()
+
+    if not args.once:
+        run_scavenge()
+        allowed = descendant_ids(project, args.probe_timeout, epic_id)
+        leftover = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)
+        if leftover and probe.seat is not None:
+            assigned = [item["id"] for item in leftover[: args.wave_size] if item.get("id")]
+            children[next_wave] = spawn_wave(
+                probe.seat, next_wave, args.wave_size, project, log_dir, epic_id, assigned
+            )
+            next_wave += 1
+            while children:
+                wait_one(children)
+                close_eligible_in_tree(project, args.probe_timeout, epic_id)
+                spawn_from_ready()
 
     allowed = descendant_ids(project, args.probe_timeout, epic_id)
     leftover = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed)

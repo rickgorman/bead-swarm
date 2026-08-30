@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 
-def bd_bin() -> str:
-    return os.environ.get("BD_BIN") or os.environ.get("BEAD_SWARM_BR_BIN") or os.environ.get("BR_BIN") or "bd"
+def bd_bin(env: dict[str, str] | None = None) -> str:
+    src = env or os.environ
+    return src.get("BD_BIN") or src.get("BEAD_SWARM_BR_BIN") or src.get("BR_BIN") or "bd"
 
 
 def run(argv: list[str], cwd: Path, env: dict[str, str] | None = None) -> str:
@@ -72,8 +73,22 @@ def dep_add(cwd: Path, blocked: str, blocker: str, env: dict[str, str] | None = 
 
 
 def ready(cwd: Path, env: dict[str, str] | None = None) -> list[dict[str, Any]]:
-    stdout = run([bd_bin(), "ready", "--json", "--limit", "200"], cwd, env=env)
-    return [item for item in parse_issues(stdout) if item.get("issue_type") != "epic"]
+    stdout = run(
+        [bd_bin(), "ready", "--json", "--limit", "200", "--sort", "priority"],
+        cwd,
+        env=env,
+    )
+    items = [item for item in parse_issues(stdout) if item.get("issue_type") != "epic"]
+
+    def rank(item: dict[str, Any]) -> int:
+        value = item.get("priority")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 9
+
+    items.sort(key=lambda item: (rank(item), item.get("id") or ""))
+    return items
 
 
 def show(cwd: Path, issue_id: str, env: dict[str, str] | None = None) -> dict[str, Any]:

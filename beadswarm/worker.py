@@ -264,6 +264,18 @@ def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool, faul
     if fault == "skip-write":
         events.emit(project, "held", bead=bead_id, files=[])
         return
+    if fault == "eacces-write":
+        files_dir = project / "files"
+        files_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(files_dir, 0o555)
+        try:
+            apply_mode(project, bead_id, contract)
+        except OSError as exc:
+            events.emit(project, "eacces", bead=bead_id, error=str(exc))
+            raise SystemExit(f"eacces-write: {exc}")
+        finally:
+            os.chmod(files_dir, 0o755)
+        raise SystemExit("eacces-write did not fail")
 
     written = apply_mode(project, bead_id, contract)
     if fault == "die-after-write":
@@ -286,10 +298,14 @@ def process_bead(project: Path, agent: str, bead_id: str, *, abandon: bool, faul
         print(f"held {bead_id} -> {', '.join(rels)}", flush=True)
         return
 
-    run(
-        [br_bin(), "close", bead_id, "--actor", agent, "--reason", f"wrote {', '.join(rels)}", "--json"],
-        project,
-    )
+    close_argv = [br_bin(), "close", bead_id, "--actor", agent, "--reason", f"wrote {', '.join(rels)}", "--json"]
+    run(close_argv, project)
+    if fault == "close-twice":
+        again = subprocess.run(close_argv, cwd=project, text=True, capture_output=True, env=command_env())
+        blob = f"{again.stdout}\n{again.stderr}".lower()
+        if again.returncode != 0 and "already" not in blob and "closed" not in blob:
+            raise SystemExit(f"second close failed: {blob.strip()}")
+        events.emit(project, "close-twice", bead=bead_id, rc=again.returncode)
     events.emit(project, "closed", bead=bead_id, files=rels)
     print(f"closed {bead_id} -> {', '.join(rels)}", flush=True)
     if fault == "die-after-close":

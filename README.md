@@ -34,16 +34,18 @@ Baseline plus overlap, then ten more combinations of dependencies, parallelism, 
 | 21 | `foreign-actor` | OtherFox holds the claim. Swarm does not steal. |
 | 22–30 | crash/hang | Finish-without-close, SIGKILL before/after write, live hang (with and without heartbeat), hang-then-succeed, two incomplete log beads, close-without-release, idempotent replay. |
 | 31 | `relates` | `relates_to` must not shrink ready width. |
-| 32 | `p0-vs-p4` | Both priorities ready; `--once` takes one; full run takes both. |
+| 32 | `p0-vs-p4` | Both priorities ready; `--once` takes **P0** (`high.txt`); full run takes both. |
 | 33 | `idempotent-rerun` | Second swarm on a closed epic is a no-op. |
+| 34 | `tiny-hang` | One hang bead. A second swarm skip-lives (ready is empty so it never takes `launcher.lock`); SIGTERM then lets a third swarm spawn. |
 
 ## Surprises the tests pin
 
 - Agent Mail exclusive conflicts return **exit 0** plus JSON `conflicts`. Do not trust the process status.
-- Parallel `am` CLIs on one mailbox also hit a **storage-root activity lock** (`temporarily busy`). Retry that the same way as a file conflict.
+- Parallel `am` CLIs on one mailbox also hit a **storage-root activity lock** (`temporarily busy` / sqlite busy), even on distinct paths. Retry that the same way as a file conflict.
 - `bd update --claim` is per **actor**. Two workers as the same OS user both win; pass `--actor BlueLake` vs `--actor CoralPeak`. A failed claim can still exit 0 with `already claimed`.
 - `bd ready --unassigned` hides a reopened bead that still has an assignee. Unclaim with `--assignee ""`.
-- `am file_reservations reserve --ttl 1` is **one minute**, not one second.
+- `am file_reservations reserve --ttl 1` is **one minute**, not one second (the CLI help still says seconds).
+- `bd children` hides closed kids; wrap uses `bd list --parent --all`. A wrap that listed one still-open closer exits 1; the next swarm closes the epic.
 - `bd dep add` refuses cycles. A stuck `in_progress` blocker is the realistic dry-frontier trap.
 
 ## Agent setup (global vs per-repo)
