@@ -120,6 +120,10 @@ if model == "fable":
 print("pong")
 '''
 
+FAKE_GROK = r'''#!/usr/bin/env python3
+print("pong")
+'''
+
 FAKE_AM_OK = r'''#!/usr/bin/env python3
 import json, sys
 from pathlib import Path
@@ -151,6 +155,7 @@ class LauncherTests(unittest.TestCase):
         write_executable(self.root / "closed-br", FAKE_CLOSED_BR)
         write_executable(self.root / "stuck-br", FAKE_STUCK_BR)
         write_executable(self.root / "claude", FAKE_CLAUDE)
+        write_executable(self.root / "grok", FAKE_GROK)
         write_executable(self.root / "am", FAKE_AM_OK)
         write_executable(self.root / "am-conflict", FAKE_AM_CONFLICT)
 
@@ -164,17 +169,89 @@ class LauncherTests(unittest.TestCase):
         env["BEAD_SWARM_AM_BIN"] = str(self.root / am)
         env["AM_BIN"] = str(self.root / am)
         env["BEAD_SWARM_CLAUDE_BIN"] = str(self.root / "claude")
+        env["BEAD_SWARM_GROK_BIN"] = str(self.root / "grok")
         env["BEAD_SWARM_PROBE_TIMEOUT"] = "5"
+        for key in (
+            "PLANNING_MODELS",
+            "BUILDING_MODELS",
+            "BEAD_SWARM_PLANNING_MODELS",
+            "BEAD_SWARM_BUILDING_MODELS",
+            "BEAD_SWARM_SEAT_CACHE_TTL",
+        ):
+            env.pop(key, None)
         return env
 
     def swarm(self, args: list[str], env: dict[str, str]) -> CompletedProcess[str]:
         return run_cmd([str(SWARM), *args], cwd=self.cwd, env=env, timeout=20)
 
     def test_skips_fable_on_quota_and_lands_on_opus5(self) -> None:
-        result = self.swarm(["--probe-only", "--reprobe"], self.env())
+        env = self.env()
+        env["BEAD_SWARM_GROK_BIN"] = str(self.root / "no-such-grok")
+        result = self.swarm(["--probe-only", "--reprobe"], env)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("clis:", result.stdout)
+        self.assertIn("planning:", result.stdout)
+        self.assertIn("building:", result.stdout)
         self.assertIn("orchestrator: opus5", result.stdout)
         self.assertIn("fable quota_dead", result.stdout)
+
+    def test_planning_models_skips_to_named_rung(self) -> None:
+        env = self.env()
+        env["PLANNING_MODELS"] = '["claude/opus-5/xhigh"]'
+        env["BEAD_SWARM_GROK_BIN"] = str(self.root / "no-such-grok")
+        result = self.swarm(["--probe-only", "--reprobe"], env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("orchestrator: opus5", result.stdout)
+        self.assertNotIn("fable quota_dead", result.stdout)
+        self.assertIn("claude/opus-5/xhigh", result.stdout)
+
+    def test_building_models_land_in_wave_prompt(self) -> None:
+        env = self.env()
+        env["BUILDING_MODELS"] = '["grok", "claude/opus/xhigh"]'
+        result = self.swarm(
+            [
+                "--lab",
+                "--seat",
+                "grok",
+                "--epic",
+                "leverage-epic-1",
+                "--once",
+                "--wave-size",
+                "1",
+                "--max-waves",
+                "1",
+                "--stagger-seconds",
+                "0",
+                "--no-am",
+            ],
+            env,
+        )
+        prompts = list((self.cwd / "tmp" / "bead-swarm").glob("*/wave-1.prompt.md")) if (self.cwd / "tmp" / "bead-swarm").exists() else []
+        self.assertTrue(prompts, result.stdout + result.stderr)
+        text = prompts[0].read_text()
+        self.assertIn("BUILDING_MODELS", text)
+        self.assertIn("grok", text)
+
+    def test_zero_cache_ttl_does_not_reuse_stale_choice(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        (self.root / "seat-cache.json").write_text(
+            json.dumps(
+                {
+                    "chosen": "grok",
+                    "reason": "cached-test",
+                    "skipped": [],
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=1800)).isoformat(),
+                }
+            )
+        )
+        env = self.env()
+        env["BEAD_SWARM_SEAT_CACHE_TTL"] = "0"
+        env["BEAD_SWARM_GROK_BIN"] = str(self.root / "no-such-grok")
+        result = self.swarm(["--probe-only"], env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("orchestrator: opus5", result.stdout)
+        self.assertNotIn(" cached", result.stdout)
 
     def test_reuses_seat_cache_younger_than_one_hour(self) -> None:
         from datetime import datetime, timedelta, timezone

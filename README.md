@@ -1,10 +1,12 @@
 # bead-swarm
 
+![bead-swarm — drain an epic in waves](docs/bead-swarm-hero.png)
+
 Host launcher that **builds an epic of Beads** in waves. The program is `bin/bead-swarm` (Python), with helpers in `beadswarm/`.
 
 You point it at a repo that already has a `.beads` graph. It takes `--epic <id>`, claims ready descendants, leases files through Agent Mail, and recycles orchestrator waves until `bd ready` for that tree is empty and the epic can close.
 
-This chat session is **not** the orchestrator. Exec the binary; it probes a seat (Fable → Sol → Opus → Terra → Grok → Composer) and spawns the harness that can actually run that model.
+This chat session is **not** the orchestrator. Exec the binary; it scans which of `claude` / `codex` / `grok` / `cursor-agent` are installed, walks `PLANNING_MODELS`, and spawns the harness that can actually run that model.
 
 ```
 bin/bead-swarm --epic <id> --cwd /path/to/your/repo
@@ -30,7 +32,7 @@ Install these on the host. `bin/install --status` reports which ones it can see.
 | `br` | [Beads Rust](https://github.com/Dicklesworthstone/beads_rust) — Rust port of Beads; same graph, `br` CLI | [Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) |
 | `bv` | [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) — TUI + robot-next. **Never run bare `bv`** (it opens a TUI). Workers call `bv-robot-next` / `bv --robot-next` only. | [Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) |
 
-**Live waves** also need at least one coding harness on `PATH`: `claude`, `codex`, `grok`, or `cursor-agent`. The launcher probes that ladder and caches the winner for an hour (`--reprobe` ignores the cache). `--lab` skips the harnesses and uses this repo's deterministic worker instead.
+**Live waves** also need at least one coding harness on `PATH`: `claude`, `codex`, `grok`, or `cursor-agent`. Every start prints `clis:` (which of those binaries exist), then walks `PLANNING_MODELS` and skips missing CLIs before probing quota. A quota-live winner is cached for an hour (`--reprobe` or `BEAD_SWARM_SEAT_CACHE_TTL=0` ignores it). `--lab` skips the harnesses and uses this repo's deterministic worker instead.
 
 `--cwd` must contain `.beads`. The swarm checkout is **not** the beads project unless you pass it on purpose.
 
@@ -82,9 +84,60 @@ Useful knobs:
 | `--probe-only` | | Print the seat and exit |
 | `--lab` | off | Deterministic worker (dummy graphs / tests), not an LLM |
 
-Env overrides exist for the same values (`BEAD_SWARM_WAVE_SIZE`, `BEAD_SWARM_BR_BIN`, `BEAD_SWARM_AM_BIN`, …).
-
 Two host launchers on the same `--cwd` flock `tmp/bead-swarm/launcher.lock`; the second bounces.
+
+## Environment
+
+`BEAD_SWARM_*` wins when both a namespaced name and a short alias exist. Specs are `harness/model/effort` (`model` and `effort` optional). Harnesses: `claude`, `codex`, `grok`, `cursor` (alias `cursor-agent`).
+
+```bash
+# JSON array (recommended)
+export PLANNING_MODELS='["claude/fable-5/xhigh","codex/gpt-5.6-sol/xhigh","claude/opus-5/xhigh"]'
+export BUILDING_MODELS='["cursor/composer-2.5","grok","claude/opus-5/xhigh","codex/gpt-5.6-terra/high"]'
+
+# Same thing, comma-separated
+export PLANNING_MODELS=claude/fable-5/xhigh,codex/gpt-5.6-sol/xhigh,claude/opus-5/xhigh
+```
+
+Every launch prints the resolved ladders and CLI scan:
+
+```
+clis: claude=/opt/homebrew/bin/claude codex=missing grok=/opt/homebrew/bin/grok cursor=missing
+planning: claude/fable-5/xhigh, codex/gpt-5.6-sol/xhigh, claude/opus-5/xhigh
+building: cursor/composer-2.5, grok, claude/opus-5/xhigh
+orchestrator: opus5 claude/opus-5/xhigh (fable quota_dead, sol bin_missing)
+```
+
+`PLANNING_MODELS` is the orchestrator fallback order (the host pings, then spawns). `BUILDING_MODELS` is injected into each wave prompt so the orchestrator picks **coders** from that list, skipping missing CLIs.
+
+| Variable | Default | What it does |
+|----------|---------|--------------|
+| `PLANNING_MODELS` / `BEAD_SWARM_PLANNING_MODELS` | `claude/fable`, `codex/gpt-5.6-sol`, `claude/opus`, `codex/gpt-5.6-terra`, `grok`, `cursor/composer-2.5` | Orchestrator ladder |
+| `BUILDING_MODELS` / `BEAD_SWARM_BUILDING_MODELS` | `cursor/composer-2.5`, `grok`, `claude/opus`, `codex/gpt-5.6-terra` | Coder fallback list in the wave prompt |
+| `BEAD_SWARM_CLAUDE_BIN` | `claude` | Claude CLI path |
+| `BEAD_SWARM_CODEX_BIN` | `codex` | Codex CLI path |
+| `BEAD_SWARM_GROK_BIN` | `grok` | Grok CLI path |
+| `BEAD_SWARM_CURSOR_BIN` | `cursor-agent` | Cursor CLI path |
+| `BEAD_SWARM_BR_BIN` / `BR_BIN` | `br` | Beads CLI (tests pin this to Go `bd`) |
+| `BEAD_SWARM_AM_BIN` / `AM_BIN` | `am` | Agent Mail CLI |
+| `BEAD_SWARM_HOME` | this checkout | Where `bin/` and `beadswarm/` live |
+| `BEAD_SWARM_SEAT_CACHE` | `~/.cache/flywheel/orchestrator-seat.json` | Quota-winner cache file |
+| `BEAD_SWARM_SEAT_CACHE_TTL` | `3600` | Cache seconds; `0` = probe every start |
+| `BEAD_SWARM_WAVE_SIZE` | `10` | Beads per wave (`--wave-size`) |
+| `BEAD_SWARM_MAX_WAVES` | `4` | Concurrent waves (`--max-waves`) |
+| `BEAD_SWARM_STAGGER` | `30` | Seconds between spawning waves |
+| `BEAD_SWARM_PROBE_TIMEOUT` | `45` | Seat ping timeout |
+| `BEAD_SWARM_PING_PROMPT` | `Reply with the single word pong.` | Probe prompt |
+| `BEAD_SWARM_LAUNCHER_LOCK_TTL` | `21600` | Agent Mail TTL on `launcher.lock` (seconds) |
+| `BEAD_SWARM_READY_LIMIT` | `200` | `bd ready --limit` |
+| `BEAD_SWARM_WAIT_POLL` | `1` | Seconds between wave-process polls |
+| `BEAD_SWARM_SCAVENGE_MAX_AGE` | `2` | Heartbeat freshness for scavenger |
+| `BEAD_SWARM_RESERVE_SECONDS` | `45` | Lab worker AM-reserve retry budget |
+| `BEAD_SWARM_SKIP_BV` | `1` | Lab worker skips `bv` unless `0` |
+| `BEAD_SWARM_WAVE` | unset | Set on child waves; nest guard |
+| `ASDF_RUBY_VERSION` | `4.0.1` | Passed through so `br` shims find Ruby |
+
+Effort flags by harness: Claude/Grok `--effort xhigh`; Codex `-c model_reasoning_effort=xhigh`; Cursor `model[effort=xhigh]`.
 
 ## What a wave does
 

@@ -53,6 +53,14 @@ def isolated_env(tmp: Path, extra: dict[str, str] | None = None) -> dict[str, st
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     env.setdefault("BEAD_SWARM_SKIP_BV", "1")
     env.setdefault("BEAD_SWARM_RESERVE_SECONDS", "45")
+    for key in (
+        "PLANNING_MODELS",
+        "BUILDING_MODELS",
+        "BEAD_SWARM_PLANNING_MODELS",
+        "BEAD_SWARM_BUILDING_MODELS",
+        "BEAD_SWARM_SEAT_CACHE_TTL",
+    ):
+        env.pop(key, None)
     if extra:
         env.update(extra)
     return env

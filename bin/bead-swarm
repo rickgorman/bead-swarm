@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Host-side bead-swarm launcher.
 
-Picks an orchestrator seat (fable > sol > opus5 > terra > grok > composer),
-caches that choice for one hour, then runs wave-shaped sessions: each
-orchestrator gets a hard budget of WAVE_SIZE beads (default 10) and exits.
+Picks an orchestrator seat from PLANNING_MODELS (default fable > sol >
+opus5 > terra > grok > composer), skipping missing CLIs every start,
+caches a quota-live winner for one hour, then runs wave-shaped sessions:
+each orchestrator gets a hard budget of WAVE_SIZE beads (default 10) and exits.
 Independent waves run concurrently (staggered) so 20 ready beads become two
 sessions of 10, not one exhausted ringleader.
 
@@ -35,13 +36,13 @@ if str(_BOOT) not in sys.path:
 
 from beadswarm.home import bin_dir, bin_path, swarm_home  # noqa: E402
 from beadswarm import scavenge as scavenge_mod  # noqa: E402
+from beadswarm import providers, settings  # noqa: E402
+from beadswarm.providers import Seat  # noqa: E402
 
 WAVE_SIZE_DEFAULT = 10
 MAX_WAVES_DEFAULT = 4
 STAGGER_DEFAULT = 30
-CACHE_TTL_SECONDS = 3600
 PROBE_TIMEOUT_DEFAULT = 45
-LAUNCHER_LOCK_TTL = 6 * 3600
 EPIC_TYPE = "epic"
 CACHE_DEFAULT = Path.home() / ".cache" / "flywheel" / "orchestrator-seat.json"
 
@@ -68,86 +69,6 @@ AUTH_MARKERS = (
     "authentication",
     "auth_failed",
 )
-
-
-@dataclass(frozen=True)
-class Seat:
-    id: str
-    harness: str
-    program: str
-    ping: tuple[str, ...]
-    spawn_prefix: tuple[str, ...]
-    model_flag: str | None = None
-
-
-def default_seats() -> list[Seat]:
-    claude = os.environ.get("BEAD_SWARM_CLAUDE_BIN", "claude")
-    codex = os.environ.get("BEAD_SWARM_CODEX_BIN", "codex")
-    grok = os.environ.get("BEAD_SWARM_GROK_BIN", "grok")
-    cursor = os.environ.get("BEAD_SWARM_CURSOR_BIN", "cursor-agent")
-    fable_model = os.environ.get("BEAD_SWARM_FABLE_MODEL", "fable")
-    opus_model = os.environ.get("BEAD_SWARM_OPUS_MODEL", "opus")
-    sol_model = os.environ.get("BEAD_SWARM_SOL_MODEL", "gpt-5.6-sol")
-    terra_model = os.environ.get("BEAD_SWARM_TERRA_MODEL", "gpt-5.6-terra")
-    grok_model = os.environ.get("BEAD_SWARM_GROK_MODEL", "")
-    composer_model = os.environ.get("BEAD_SWARM_COMPOSER_MODEL", "composer-2.5")
-
-    grok_ping = [grok, "--single", "Reply with the single word pong."]
-    grok_spawn = [grok, "--output-format", "json", "--permission-mode", "bypassPermissions", "--always-approve"]
-    if grok_model:
-        grok_ping = [grok, "-m", grok_model, "--single", "Reply with the single word pong."]
-        grok_spawn = [grok, "-m", grok_model, "--output-format", "json", "--permission-mode", "bypassPermissions", "--always-approve"]
-
-    return [
-        Seat(
-            id="fable",
-            harness="claude",
-            program="claude-code",
-            ping=(claude, "-p", "--model", fable_model, "Reply with the single word pong."),
-            spawn_prefix=(claude, "-p", "--model", fable_model, "--permission-mode", "acceptEdits", "--output-format", "text"),
-            model_flag=fable_model,
-        ),
-        Seat(
-            id="sol",
-            harness="codex",
-            program="codex-cli",
-            ping=(codex, "exec", "-m", sol_model, "-s", "read-only", "--skip-git-repo-check", "Reply with the single word pong."),
-            spawn_prefix=(codex, "exec", "-m", sol_model, "-s", "workspace-write", "--skip-git-repo-check"),
-            model_flag=sol_model,
-        ),
-        Seat(
-            id="opus5",
-            harness="claude",
-            program="claude-code",
-            ping=(claude, "-p", "--model", opus_model, "Reply with the single word pong."),
-            spawn_prefix=(claude, "-p", "--model", opus_model, "--permission-mode", "acceptEdits", "--output-format", "text"),
-            model_flag=opus_model,
-        ),
-        Seat(
-            id="terra",
-            harness="codex",
-            program="codex-cli",
-            ping=(codex, "exec", "-m", terra_model, "-s", "read-only", "--skip-git-repo-check", "Reply with the single word pong."),
-            spawn_prefix=(codex, "exec", "-m", terra_model, "-s", "workspace-write", "--skip-git-repo-check"),
-            model_flag=terra_model,
-        ),
-        Seat(
-            id="grok",
-            harness="grok",
-            program="grok",
-            ping=tuple(grok_ping),
-            spawn_prefix=tuple(grok_spawn),
-            model_flag=grok_model or None,
-        ),
-        Seat(
-            id="composer",
-            harness="cursor",
-            program="cursor-agent",
-            ping=(cursor, "--print", "--output-format", "text", "-f", "--model", composer_model, "Reply with the single word pong."),
-            spawn_prefix=(cursor, "--print", "--output-format", "text", "-f", "--model", composer_model),
-            model_flag=composer_model,
-        ),
-    ]
 
 
 @dataclass
@@ -177,7 +98,7 @@ def classify_failure(text: str) -> str:
 
 def command_env() -> dict[str, str]:
     env = os.environ.copy()
-    env.setdefault("ASDF_RUBY_VERSION", "4.0.1")
+    env.setdefault("ASDF_RUBY_VERSION", settings.asdf_ruby())
     env.setdefault("BEAD_SWARM_HOME", str(swarm_home(__file__)))
     env["PYTHONPATH"] = str(swarm_home(__file__)) + os.pathsep + env.get("PYTHONPATH", "")
     return env
@@ -233,7 +154,7 @@ def load_cache() -> dict[str, Any] | None:
 
 
 def save_cache(result: ProbeResult) -> None:
-    if result.seat is None:
+    if result.seat is None or settings.seat_cache_ttl() <= 0:
         return
     path = cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -243,7 +164,7 @@ def save_cache(result: ProbeResult) -> None:
         "reason": result.reason,
         "skipped": result.skipped,
         "probed_at": now_utc().isoformat(),
-        "expires_at": (now_utc() + timedelta(seconds=CACHE_TTL_SECONDS)).isoformat(),
+        "expires_at": (now_utc() + timedelta(seconds=settings.seat_cache_ttl())).isoformat(),
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -256,25 +177,39 @@ def invalidate_cache() -> None:
         pass
 
 
-def choose_seat(seats: list[Seat], timeout: int, reprobe: bool, pin: str | None) -> ProbeResult:
-    by_id = {seat.id: seat for seat in seats}
+def choose_seat(
+    seats: list[Seat],
+    timeout: int,
+    reprobe: bool,
+    pin: str | None,
+    clis: dict[str, str | None] | None = None,
+) -> ProbeResult:
+    present = clis if clis is not None else providers.detect_clis()
     if pin:
-        if pin not in by_id:
-            raise SystemExit(f"unknown seat {pin}")
-        return ProbeResult(seat=by_id[pin], reason="pinned", cached=False)
+        try:
+            return ProbeResult(seat=providers.resolve_pin(pin, seats), reason="pinned", cached=False)
+        except ValueError as exc:
+            raise SystemExit(f"unknown seat {pin}: {exc}") from exc
 
-    if not reprobe:
+    by_id = {seat.id: seat for seat in seats}
+    ttl = settings.seat_cache_ttl()
+    if not reprobe and ttl > 0:
         cached = load_cache()
         if cached and cached.get("chosen") in by_id:
-            return ProbeResult(
-                seat=by_id[cached["chosen"]],
-                skipped=list(cached.get("skipped") or []),
-                cached=True,
-                reason=cached.get("reason") or "cached",
-            )
+            chosen = by_id[cached["chosen"]]
+            if present.get(chosen.harness):
+                return ProbeResult(
+                    seat=chosen,
+                    skipped=list(cached.get("skipped") or []),
+                    cached=True,
+                    reason=cached.get("reason") or "cached",
+                )
 
     skipped: list[dict[str, str]] = []
     for seat in seats:
+        if not present.get(seat.harness):
+            skipped.append({"id": seat.id, "reason": "bin_missing"})
+            continue
         reason = ping_seat(seat, timeout)
         if reason is None:
             result = ProbeResult(seat=seat, skipped=skipped, reason="probed")
@@ -487,7 +422,16 @@ def _priority_rank(item: dict[str, Any]) -> int:
 
 
 def ready_beads(cwd: str, timeout: int, allowed_ids: set[str] | None = None) -> list[dict[str, Any]]:
-    argv = [br_bin(), "ready", "--json", "--unassigned", "--limit", "200", "--sort", "priority"]
+    argv = [
+        br_bin(),
+        "ready",
+        "--json",
+        "--unassigned",
+        "--limit",
+        str(settings.ready_limit()),
+        "--sort",
+        "priority",
+    ]
     result = run_cmd(argv, timeout=timeout, cwd=cwd)
     if result.returncode != 0:
         raise SystemExit(f"br ready failed: {result.stderr.strip() or result.stdout.strip()}")
@@ -509,11 +453,13 @@ def wave_prompt(
     project: str,
     epic_id: str,
     bead_ids: list[str],
+    building: str = "",
 ) -> str:
     id_lines = "\n".join(f"- {bead_id}" for bead_id in bead_ids) or "- (none)"
+    effort = f" effort={seat.effort}" if seat.effort else ""
     return f"""You are a bead-swarm WAVE orchestrator, not a ringleader for the whole graph.
 
-Seat: {seat.id} (harness {seat.harness}, model {seat.model_flag or "default"})
+Seat: {seat.id} (harness {seat.harness}, model {seat.model_flag or "default"}{effort})
 Epic: {epic_id}
 Wave: {wave_index}
 HARD BUDGET: process at most {wave_size} beads from this list, then EXIT even if more remain.
@@ -522,11 +468,14 @@ The host launcher (`bin/bead-swarm`) will spawn more waves. Do not re-exec bin/b
 Allowed bead ids (this wave only):
 {id_lines}
 
+Coder fallback (BUILDING_MODELS — first installed CLI wins, then the next):
+{building or "(defaults)"}
+
 Follow `.claude/archived/commands/bead-swarm.md` inner loop:
 - only claim ids on the allowed list (ignore off-epic `bv` picks)
 - skip epics; you claim verify:slice / verify:landing
 - `br update <id> --claim` then Agent Mail reserve + thread
-- spawn a FRESH coder subagent per bead; you write ZERO product code
+- spawn a FRESH coder subagent per bead from BUILDING_MODELS; you write ZERO product code
 - you verify (`bin/bead-verify`, `bin/bead-check`) with a different model than the coder
 - close with evidence; file follow-ups as beads
 
@@ -638,7 +587,7 @@ def am_lock_launcher(project: str, timeout: int) -> None:
         "tmp/bead-swarm/launcher.lock",
         "--exclusive",
         "--ttl",
-        str(LAUNCHER_LOCK_TTL),
+        str(settings.launcher_lock_ttl()),
         "--reason",
         "bead-swarm-launcher",
     ]
@@ -659,7 +608,8 @@ def announce_seat(result: ProbeResult) -> None:
     if result.skipped:
         extra = " (" + ", ".join(f"{row['id']} {row['reason']}" for row in result.skipped) + ")"
     cache = " cached" if result.cached else ""
-    print(f"orchestrator: {result.seat.id}{extra}{cache}", flush=True)
+    spec = f" {result.seat.spec}" if result.seat.spec and result.seat.spec != result.seat.id else ""
+    print(f"orchestrator: {result.seat.id}{spec}{extra}{cache}", flush=True)
 
 
 def spawn_wave(
@@ -671,7 +621,9 @@ def spawn_wave(
     epic_id: str,
     bead_ids: list[str],
 ) -> subprocess.Popen[str]:
-    prompt = wave_prompt(seat, wave_index, wave_size, project, epic_id, bead_ids)
+    clis = providers.detect_clis()
+    building = providers.format_building(providers.available_building(clis))
+    prompt = wave_prompt(seat, wave_index, wave_size, project, epic_id, bead_ids, building=building)
     prompt_file = log_dir / f"wave-{wave_index}.prompt.md"
     prompt_file.write_text(prompt)
     if os.environ.get("BEAD_SWARM_LAB") == "1":
@@ -684,6 +636,7 @@ def spawn_wave(
     env["BEAD_SWARM_WAVE_SIZE"] = str(wave_size)
     env["BEAD_SWARM_SEAT"] = seat.id
     env["BEAD_SWARM_WAVE_PID"] = str(os.getpid())
+    env["BEAD_SWARM_BUILDING_MODELS"] = json.dumps([spec.label for spec in providers.building_specs()])
     log_path = log_dir / f"wave-{wave_index}.log"
     log_handle = open(log_path, "w")
     proc = subprocess.Popen(
@@ -720,15 +673,15 @@ def wait_one(procs: dict[int, subprocess.Popen[str]]) -> int:
                     invalidate_cache()
                 del procs[wave_index]
                 return wave_index
-        time.sleep(1)
+        time.sleep(settings.wait_poll())
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Wave-shaped bead-swarm launcher")
-    parser.add_argument("--wave-size", type=int, default=int(os.environ.get("BEAD_SWARM_WAVE_SIZE", WAVE_SIZE_DEFAULT)))
-    parser.add_argument("--max-waves", type=int, default=int(os.environ.get("BEAD_SWARM_MAX_WAVES", MAX_WAVES_DEFAULT)))
-    parser.add_argument("--stagger-seconds", type=int, default=int(os.environ.get("BEAD_SWARM_STAGGER", STAGGER_DEFAULT)))
-    parser.add_argument("--probe-timeout", type=int, default=int(os.environ.get("BEAD_SWARM_PROBE_TIMEOUT", PROBE_TIMEOUT_DEFAULT)))
+    parser.add_argument("--wave-size", type=int, default=settings.wave_size(WAVE_SIZE_DEFAULT))
+    parser.add_argument("--max-waves", type=int, default=settings.max_waves(MAX_WAVES_DEFAULT))
+    parser.add_argument("--stagger-seconds", type=int, default=settings.stagger_seconds(STAGGER_DEFAULT))
+    parser.add_argument("--probe-timeout", type=int, default=settings.probe_timeout(PROBE_TIMEOUT_DEFAULT))
     parser.add_argument("--seat", help="Pin a seat id (skip probe)")
     parser.add_argument("--reprobe", action="store_true", help="Ignore the 1h seat cache")
     parser.add_argument("--probe-only", action="store_true")
@@ -757,9 +710,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.lab:
         os.environ["BEAD_SWARM_LAB"] = "1"
     project = str(Path(args.cwd).resolve())
-    seats = default_seats()
+    try:
+        seats = providers.planning_seats()
+        building = providers.building_specs()
+    except ValueError as exc:
+        print(f"bin/bead-swarm: {exc}", file=sys.stderr)
+        return 1
+    clis = providers.detect_clis()
+    print(providers.format_clis(clis), flush=True)
+    print(
+        "planning: " + ", ".join(spec.label for spec in providers.planning_specs()),
+        flush=True,
+    )
+    print("building: " + ", ".join(spec.label for spec in building), flush=True)
     if args.probe_only:
-        probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat)
+        probe = choose_seat(
+            seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat, clis=clis
+        )
         announce_seat(probe)
         return 0 if probe.seat else 1
 
@@ -768,7 +735,9 @@ def main(argv: list[str] | None = None) -> int:
     allowed = descendant_ids(project, args.probe_timeout, epic_id)
     print(f"epic: {epic_id}  {epic.get('title') or ''}", flush=True)
 
-    probe = choose_seat(seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat)
+    probe = choose_seat(
+        seats, timeout=args.probe_timeout, reprobe=args.reprobe, pin=args.seat, clis=clis
+    )
     announce_seat(probe)
     if probe.seat is None:
         return 1
@@ -779,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             reports = scavenge_mod.scavenge(
                 Path(project),
-                max_age=args.hung_after or 2.0,
+                max_age=args.hung_after or settings.scavenge_max_age(),
                 hung_after=args.hung_after,
                 env=command_env(),
             )
@@ -853,7 +822,9 @@ def main(argv: list[str] | None = None) -> int:
             remaining = ready_beads(project, timeout=args.probe_timeout, allowed_ids=allowed_now)
         if not remaining or len(children) >= args.max_waves:
             return False
-        nxt = choose_seat(seats, timeout=args.probe_timeout, reprobe=False, pin=args.seat)
+        nxt = choose_seat(
+            seats, timeout=args.probe_timeout, reprobe=False, pin=args.seat, clis=clis
+        )
         if nxt.seat is None:
             announce_seat(nxt)
             return False
