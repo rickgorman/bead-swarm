@@ -6,6 +6,7 @@ from pathlib import Path
 
 from beadswarm.amutil import parse_reserve
 from beadswarm.contract import missing_claim_requires, parse_contract
+from beadswarm.diagnose import classify, format_diagnosis
 from beadswarm.scenario import bead_body
 from beadswarm.worker import parse_allowed
 
@@ -80,6 +81,66 @@ class ContractTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("a" * 40 + "\n")
             self.assertEqual(missing_claim_requires(root, contract), [])
+
+
+class DiagnoseTests(unittest.TestCase):
+    def test_missing_claim_requires_needs_investigation(self) -> None:
+        proof = {
+            "id": "fgs-proof",
+            "issue_type": "task",
+            "status": "open",
+            "description": (
+                "```json\n"
+                '{"files": ["files/proof.txt"], "mode": "write", '
+                '"claim_requires": ["tmp/bead-swarm/candidates/g00.sha"]}\n'
+                "```"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            diag = classify(
+                "fgs-epic",
+                [proof],
+                project=tmp,
+                graph_ready_ids={"fgs-proof"},
+            )
+        self.assertTrue(diag.needs_investigation)
+        self.assertEqual(
+            diag.skipped_claim_requires,
+            [("fgs-proof", ["tmp/bead-swarm/candidates/g00.sha"])],
+        )
+        self.assertEqual(diag.blocked, [])
+        text = format_diagnosis(diag)
+        self.assertIn("diagnose:", text)
+        self.assertIn("fgs-proof missing tmp/bead-swarm/candidates/g00.sha", text)
+        self.assertIn("needs_investigation: yes", text)
+
+    def test_blocked_only_does_not_need_investigation(self) -> None:
+        blocker = {
+            "id": "cyc-a",
+            "issue_type": "task",
+            "status": "in_progress",
+            "description": "blocker",
+        }
+        blocked = {
+            "id": "cyc-b",
+            "issue_type": "task",
+            "status": "open",
+            "description": "blocked",
+            "dependencies": [
+                {"id": "cyc-a", "status": "in_progress", "dependency_type": "blocks"}
+            ],
+        }
+        diag = classify(
+            "cyc-epic",
+            [blocker, blocked],
+            project=".",
+            graph_ready_ids=set(),
+        )
+        self.assertFalse(diag.needs_investigation)
+        self.assertEqual(diag.skipped_claim_requires, [])
+        self.assertEqual(diag.blocked, ["cyc-b"])
+        self.assertEqual(diag.in_progress, ["cyc-a"])
+        self.assertIn("needs_investigation: no", format_diagnosis(diag))
 
 
 class ListScenariosTests(unittest.TestCase):

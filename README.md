@@ -154,6 +154,10 @@ Inside a live wave the spawned orchestrator:
 
 If a worker dies mid-bead, the next recycle **scavenges** `in_progress` rows (complete file → close; incomplete + dead pid → unclaim). Live pids are left alone unless you pass `--hung-after`.
 
+### Empty frontier
+
+When no beads are assignable, the host prints a Python `diagnose:` of why: graph-ready but missing `claim_requires`, blocked, `in_progress`, assigned-hidden (`bd ready --unassigned` hid them), or open-unblocked catch-alls. Missing `claim_requires` (and similar semantic gates) spawn **one** investigator session on the same planning seat — not a claim, and not a guessed SHA/file. `--lab` and `--dry-run` stay non-agentic (diagnosis only).
+
 ## Lab tests (optional)
 
 Dummy graphs pressure-test overlap, claims, Agent Mail, wrap, and crash/hang recovery without touching a real project graph.
@@ -208,7 +212,7 @@ bin/bead-swarm --lab --seat grok --epic "$(cat /tmp/ovx/EPIC)" --cwd /tmp/ovx --
 - Parallel `am` CLIs on one mailbox also hit a **storage-root activity lock** (`temporarily busy` / sqlite busy), even on distinct paths. Retry that the same way as a file conflict.
 - `bd update --claim` is per **actor**. Two workers as the same OS user both win; pass `--actor BlueLake` vs `--actor CoralPeak`. A failed claim can still exit 0 with `already claimed`.
 - `bd ready --unassigned` hides a reopened bead that still has an assignee. Unclaim with `--assignee ""`.
-- `bd ready` is not semantic ready; `claim_requires` files must exist.
+- `bd ready` is not semantic ready; `claim_requires` files must exist. An empty frontier is diagnosed in Python; a missing `claim_requires` file launches one investigator session, never a claim. `--lab` does not spawn that session.
 - `am file_reservations reserve --ttl 1` is **one minute**, not one second (the CLI help still says seconds).
 - `bd children` hides closed kids; wrap uses `bd list --parent --all`. A wrap that listed one still-open closer exits 1; the next swarm closes the epic.
 - `bd dep add` refuses cycles. A stuck `in_progress` blocker is the realistic dry-frontier trap.

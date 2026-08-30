@@ -38,6 +38,7 @@ from beadswarm.home import bin_dir, bin_path, swarm_home  # noqa: E402
 from beadswarm import scavenge as scavenge_mod  # noqa: E402
 from beadswarm import providers, settings  # noqa: E402
 from beadswarm.contract import missing_claim_requires, parse_contract  # noqa: E402
+from beadswarm.diagnose import Diagnosis, diagnose_epic, format_diagnosis  # noqa: E402
 from beadswarm.providers import Seat  # noqa: E402
 
 WAVE_SIZE_DEFAULT = 10
@@ -422,13 +423,13 @@ def _priority_rank(item: dict[str, Any]) -> int:
         return 9
 
 
-def ready_beads(
+def graph_ready_beads(
     cwd: str,
     timeout: int,
     allowed_ids: set[str] | None = None,
     parent_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Ready work for this epic only.
+    """Graph-ready work for this epic (`br ready --unassigned`), unfiltered by files.
 
     Global `br ready --limit 200 --sort priority` is a repo-wide window. Other
     programs' P0 epics fill it and this epic's P1 features never appear.
@@ -461,8 +462,18 @@ def ready_beads(
             continue
         beads.append(item)
     beads.sort(key=lambda item: (_priority_rank(item), item.get("id") or ""))
+    return beads
+
+
+def ready_beads(
+    cwd: str,
+    timeout: int,
+    allowed_ids: set[str] | None = None,
+    parent_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Assignable work: graph-ready and passing semantic gates such as claim_requires."""
     assignable: list[dict[str, Any]] = []
-    for item in beads:
+    for item in graph_ready_beads(cwd, timeout, allowed_ids=allowed_ids, parent_id=parent_id):
         contract = _contract_for_ready_item(cwd, timeout, item)
         missing = missing_claim_requires(cwd, contract)
         if missing:
@@ -524,6 +535,51 @@ Register once:
   am macros start-session --json --project "{project}" --program {seat.program} --model {seat.model_flag or seat.id} --agent-name Wave-{wave_index}-{seat.id} --task bead-swarm-wave-{wave_index}
 
 When you have finished this list, print WAVE_DONE and exit 0.
+"""
+
+
+INVESTIGATOR_AGENT = "CedarProbe"
+
+
+def investigate_prompt(seat: Seat, project: str, epic_id: str, diagnosis: Diagnosis) -> str:
+    skipped = diagnosis.skipped_claim_requires
+    skip_lines = "\n".join(
+        f"- {bead_id}: missing {', '.join(paths)}" for bead_id, paths in skipped
+    ) or "- (none)"
+    effort = f" effort={seat.effort}" if seat.effort else ""
+    return f"""You are a bead-swarm INVESTIGATOR, not a wave orchestrator and not a coder.
+
+Seat: {seat.id} (harness {seat.harness}, model {seat.model_flag or "default"}{effort})
+Epic: {epic_id}
+Project: {project}
+
+The host already ran a Python diagnosis of this empty frontier. Do not re-exec bin/bead-swarm.
+
+{format_diagnosis(diagnosis)}
+
+Semantically blocked beads (graph-ready, missing claim_requires):
+{skip_lines}
+
+Your job: really dig in. Read each blocked bead body. Find who should produce the missing path. Search the graph for a producer. Figure out whether a producer bead is missing or the contract is stale.
+
+Hard rules:
+- Zero product code.
+- Do not claim the semantically-blocked bead (`br update --claim` is forbidden for those ids).
+- Do not invent or write the missing SHA / file (including any path listed as missing).
+- Do not close the blocked proof or gate without evidence it is already satisfied (it is not).
+- You MAY file a follow-up bead if a producer is clearly missing from the graph. Claiming the proof is not allowed.
+- Agent Mail name: adjective+noun such as {INVESTIGATOR_AGENT}. Never Wave-1-sol.
+
+Report:
+1. Why each missing claim_requires file is required (cite the bead body / contract).
+2. Which existing bead or slice should produce that path.
+3. Whether a producer bead is missing from the graph (file a follow-up if clearly missing).
+4. What a human or later wave should do next.
+
+If you register with Agent Mail:
+  am macros start-session --json --project "{project}" --program {seat.program} --model {seat.model_flag or seat.id} --agent-name {INVESTIGATOR_AGENT} --task bead-swarm-investigate
+
+When finished, print INVESTIGATE_DONE and exit 0.
 """
 
 
@@ -693,6 +749,36 @@ def spawn_wave(
     return proc
 
 
+def spawn_investigate(
+    seat: Seat,
+    project: str,
+    log_dir: Path,
+    epic_id: str,
+    diagnosis: Diagnosis,
+) -> subprocess.Popen[str]:
+    prompt = investigate_prompt(seat, project, epic_id, diagnosis)
+    prompt_file = log_dir / "investigate-1.prompt.md"
+    prompt_file.write_text(prompt)
+    argv = list(seat.spawn_prefix) + [prompt]
+    env = command_env()
+    env["PATH"] = str(bin_dir(__file__)) + os.pathsep + env.get("PATH", "")
+    env["BEAD_SWARM_SEAT"] = seat.id
+    env["BEAD_SWARM_INVESTIGATE"] = "1"
+    log_path = log_dir / "investigate-1.log"
+    log_handle = open(log_path, "w")
+    proc = subprocess.Popen(
+        argv,
+        cwd=project,
+        env=env,
+        stdout=log_handle,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._bead_swarm_log = log_handle  # type: ignore[attr-defined]
+    print(f"investigate: spawned pid={proc.pid} log={log_path}", flush=True)
+    return proc
+
+
 def lab_worker_path() -> str:
     return str(bin_path("bead-swarm-lab-worker", __file__))
 
@@ -814,11 +900,65 @@ def main(argv: list[str] | None = None) -> int:
         )
     ready_count = len(beads)
     print(f"ready (non-epic, this epic): {ready_count}", flush=True)
+
+    investigated = False
+    log_dir: Path | None = None
+
+    def ensure_log_dir() -> Path:
+        nonlocal log_dir
+        if log_dir is None:
+            log_dir = Path(project) / "tmp" / "bead-swarm" / now_utc().strftime("%Y%m%dT%H%M%SZ")
+            log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir
+
+    def print_diagnosis() -> Diagnosis:
+        raw_ready = graph_ready_beads(
+            project, timeout=args.probe_timeout, allowed_ids=allowed, parent_id=epic_id
+        )
+        diag = diagnose_epic(
+            epic_id,
+            project=project,
+            descendant_ids=allowed,
+            graph_ready_ids={str(item["id"]) for item in raw_ready if item.get("id")},
+            show=lambda did: br_show(project, args.probe_timeout, did),
+            extra_items=raw_ready,
+        )
+        print(format_diagnosis(diag), flush=True)
+        return diag
+
+    def try_investigate(diag: Diagnosis) -> list[dict[str, Any]] | None:
+        nonlocal investigated, allowed
+        if (
+            not diag.needs_investigation
+            or args.lab
+            or args.dry_run
+            or investigated
+            or probe.seat is None
+        ):
+            return None
+        investigated = True
+        proc = spawn_investigate(probe.seat, project, ensure_log_dir(), epic_id, diag)
+        code = proc.wait()
+        close_proc_log(proc)
+        print(f"investigate: exit {code}", flush=True)
+        if code != 0:
+            invalidate_cache()
+        allowed = descendant_ids(project, args.probe_timeout, epic_id)
+        return ready_beads(
+            project, timeout=args.probe_timeout, allowed_ids=allowed, parent_id=epic_id
+        )
+
     if ready_count == 0:
-        if args.dry_run:
-            print("frontier dry")
-            return 0
-        return finish_tree(project, args.probe_timeout, epic_id)
+        recovered = try_investigate(print_diagnosis())
+        if recovered:
+            beads = recovered
+            ready_count = len(beads)
+            print(f"ready (non-epic, this epic): {ready_count}", flush=True)
+        if ready_count == 0:
+            if args.dry_run:
+                print("frontier dry")
+                return 0
+            return finish_tree(project, args.probe_timeout, epic_id)
 
     waves_needed = min(args.max_waves, max(1, (ready_count + args.wave_size - 1) // args.wave_size))
     print(
@@ -832,8 +972,7 @@ def main(argv: list[str] | None = None) -> int:
         am_register_launcher(project, timeout=args.probe_timeout)
         am_lock_launcher(project, timeout=args.probe_timeout)
 
-    log_dir = Path(project) / "tmp" / "bead-swarm" / now_utc().strftime("%Y%m%dT%H%M%SZ")
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = ensure_log_dir()
 
     children: dict[int, subprocess.Popen[str]] = {}
 
@@ -917,6 +1056,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     if leftover:
         print(f"waves finished; {len(leftover)} ready beads remain", flush=True)
+        return 1
+    recovered = try_investigate(print_diagnosis())
+    if recovered:
+        print(f"waves finished; {len(recovered)} ready beads remain", flush=True)
         return 1
     return finish_tree(project, args.probe_timeout, epic_id)
 

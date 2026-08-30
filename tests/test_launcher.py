@@ -118,6 +118,7 @@ else:
 FAKE_STUCK_BR = r'''#!/usr/bin/env python3
 import json, sys
 args = sys.argv[1:]
+positional = [a for a in args[1:] if not a.startswith("-")] if args else []
 epic = {"id": "leverage-epic-1", "title": "Program", "issue_type": "epic", "status": "open", "priority": 0}
 kids = [
     {"id": "leverage-a", "issue_type": "task", "status": "in_progress"},
@@ -127,7 +128,9 @@ cmd = args[0] if args else ""
 if cmd == "list":
     print(json.dumps(kids if "--parent" in args else [epic]))
 elif cmd == "show":
-    print(json.dumps(epic))
+    ident = positional[0] if positional else ""
+    found = next((item for item in [epic, *kids] if item["id"] == ident), None)
+    print(json.dumps(found if found else {"error": "no issues found matching the provided IDs"}))
 elif cmd == "children":
     print(json.dumps(kids))
 elif cmd == "ready":
@@ -178,7 +181,15 @@ print("pong")
 '''
 
 FAKE_GROK = r'''#!/usr/bin/env python3
-print("pong")
+import sys
+from pathlib import Path
+root = Path(__file__).resolve().parent
+args = sys.argv[1:]
+(root / "grok-args.txt").write_text("\n".join(args))
+if "--single" in args:
+    print("pong")
+else:
+    print("done")
 '''
 
 FAKE_AM_OK = r'''#!/usr/bin/env python3
@@ -439,6 +450,52 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("open beads", result.stdout)
         self.assertNotIn("closed epic", result.stdout)
+
+    def test_lab_missing_claim_requires_diagnoses_without_spawning_investigator(self) -> None:
+        result = self.swarm(
+            [
+                "--lab",
+                "--seat",
+                "grok",
+                "--epic",
+                "leverage-epic-1",
+                "--no-am",
+                "--no-scavenge",
+            ],
+            self.env(br="claim-requires-br"),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("diagnose:", result.stdout)
+        self.assertIn("tmp/bead-swarm/candidates/g00.sha", result.stdout)
+        self.assertIn("skipped-claim_requires: leverage-proof missing", result.stdout)
+        self.assertNotIn("investigate: spawned", result.stdout)
+        self.assertFalse((self.root / "grok-args.txt").exists())
+        logs = list((self.cwd / "tmp" / "bead-swarm").glob("*/investigate-1.log")) if (self.cwd / "tmp" / "bead-swarm").exists() else []
+        self.assertFalse(logs)
+        self.assertNotIn("closed epic", result.stdout)
+
+    def test_non_lab_missing_claim_requires_spawns_investigator(self) -> None:
+        result = self.swarm(
+            ["--seat", "grok", "--epic", "leverage-epic-1", "--no-am", "--no-scavenge"],
+            self.env(br="claim-requires-br"),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("diagnose:", result.stdout)
+        self.assertIn("investigate: spawned pid=", result.stdout)
+        self.assertIn("investigate: exit 0", result.stdout)
+        self.assertIn("open beads", result.stdout)
+        self.assertNotIn("closed epic", result.stdout)
+        prompts = list((self.cwd / "tmp" / "bead-swarm").glob("*/investigate-1.prompt.md"))
+        self.assertTrue(prompts, result.stdout + result.stderr)
+        text = prompts[0].read_text()
+        self.assertIn("INVESTIGATOR", text)
+        self.assertIn("claim_requires", text)
+        self.assertIn("Do not claim", text)
+        grok_args = (self.root / "grok-args.txt").read_text()
+        self.assertIn("investigate", grok_args.lower())
+        self.assertIn("claim_requires", grok_args)
+        self.assertIn("do not claim", grok_args.lower())
+        self.assertTrue(list((self.cwd / "tmp" / "bead-swarm").glob("*/investigate-1.log")))
 
     def test_launcher_lock_detects_json_conflicts_at_exit_zero(self) -> None:
         result = self.swarm(
