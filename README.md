@@ -4,6 +4,28 @@ Dummy graphs and tests for the host `bin/bead-swarm` launcher: waves, `bd` claim
 
 This is not the Leverage app. Each scenario materializes into a throwaway git+`bd` directory so the live beads graph stays untouched.
 
+## Prerequisites
+
+Install these on the host. `bin/install --status` reports which ones it can see.
+
+**Required for the lab tests** (`python3 -m unittest discover -s tests`):
+
+| Binary | What it is | Link |
+|--------|------------|------|
+| `python3` | Python 3.11+ | [python.org](https://www.python.org/downloads/) |
+| `git` | Isolated lab repos | [git-scm.com](https://git-scm.com/) |
+| `bd` | Go [Beads](https://github.com/steveyegge/beads) — graph issue tracker (`bd ready`, `--claim`, `--json`) | [steveyegge/beads](https://github.com/steveyegge/beads) |
+| `am` | [Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail) CLI — identities and file reservations | [Dicklesworthstone/mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail) |
+
+**Used by the launcher / workers** (tests pin `BEAD_SWARM_BR_BIN` to Go `bd` because `br` on PATH is often a shim):
+
+| Binary | What it is | Link |
+|--------|------------|------|
+| `br` | [Beads Rust](https://github.com/Dicklesworthstone/beads_rust) — Rust port of Beads; same graph, `br` CLI | [Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) |
+| `bv` | [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) — TUI + robot-next. **Never run bare `bv`** (it opens a TUI). Lab workers call `bv-robot-next` / `bv --robot-next` only, and skip BV unless `BEAD_SWARM_SKIP_BV=0`. | [Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) |
+
+**Optional, live waves only** (not the `--lab` worker). The launcher probes this seat ladder and caches the winner for an hour: Fable / Sol / Opus / Terra / Grok / Composer — via `claude`, `codex`, `grok`, and `cursor-agent`. Lab runs pass `--lab --seat grok` and never need those harnesses.
+
 ## The angles
 
 Baseline plus overlap, then ten more combinations of dependencies, parallelism, and Agent Mail.
@@ -80,7 +102,7 @@ The skill (`.claude/skills/bead-swarm/SKILL.md`) is what tells an agent **when**
 
 ## Run
 
-Needs `bd` (Go beads), `am` (MCP Agent Mail), `git`, and Python 3.11+.
+See **Prerequisites**. Then:
 
 ```bash
 python3 -m unittest discover -s tests -v
