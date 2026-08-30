@@ -37,6 +37,7 @@ if str(_BOOT) not in sys.path:
 from beadswarm.home import bin_dir, bin_path, swarm_home  # noqa: E402
 from beadswarm import scavenge as scavenge_mod  # noqa: E402
 from beadswarm import providers, settings  # noqa: E402
+from beadswarm.contract import missing_claim_requires, parse_contract  # noqa: E402
 from beadswarm.providers import Seat  # noqa: E402
 
 WAVE_SIZE_DEFAULT = 10
@@ -460,7 +461,30 @@ def ready_beads(
             continue
         beads.append(item)
     beads.sort(key=lambda item: (_priority_rank(item), item.get("id") or ""))
-    return beads
+    assignable: list[dict[str, Any]] = []
+    for item in beads:
+        contract = _contract_for_ready_item(cwd, timeout, item)
+        missing = missing_claim_requires(cwd, contract)
+        if missing:
+            print(
+                f"skip {item.get('id')}: claim_requires missing {', '.join(missing)}",
+                flush=True,
+            )
+            continue
+        assignable.append(item)
+    return assignable
+
+
+def _contract_for_ready_item(cwd: str, timeout: int, item: dict[str, Any]) -> dict[str, Any]:
+    desc = item.get("description") or item.get("body") or ""
+    if "```json" in desc:
+        return parse_contract(item)
+    bead_id = str(item.get("id") or "")
+    if bead_id:
+        shown = br_show(cwd, timeout, bead_id)
+        if shown:
+            return parse_contract(shown)
+    return parse_contract(item)
 
 
 def wave_prompt(

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from beadswarm import amutil, events, heartbeat
-from beadswarm.contract import parse_contract
+from beadswarm.contract import missing_claim_requires, parse_contract
 
 AGENT_NAMES = ("BlueLake", "CoralPeak", "JadeFox", "IvoryOwl", "AmberFox", "ScarletCave")
 
@@ -340,6 +340,13 @@ def main(argv: list[str] | None = None) -> int:
             events.emit(project, "off-epic-bv", pick=pick, allowed=list(remaining))
             print(f"off-epic-bv: {pick}", flush=True)
         bead_id = pick if pick in remaining else remaining[0]
+        shown = show_bead(project, bead_id)
+        missing = missing_claim_requires(project, parse_contract(shown))
+        if missing:
+            events.emit(project, "claim-blocked", bead=bead_id, agent=agent, missing=missing)
+            print(f"skip {bead_id}: claim_requires missing {', '.join(missing)}", flush=True)
+            remaining.remove(bead_id)
+            continue
         claim = subprocess.run(
             [br_bin(), "update", bead_id, "--claim", "--actor", agent, "--json"],
             cwd=project,

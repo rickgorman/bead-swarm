@@ -226,10 +226,16 @@ class ExtraScenarioTests(unittest.TestCase):
         self.assertEqual(meta["ready_width"], 1)
         self.assertEqual([item["id"] for item in bd.ready(lab, env=env)], [proof_id])
         self.assertFalse(candidate.exists(), "the absorbed G00 candidate must not exist in this setup")
-        self.assertIn(
-            "semantically not ready even when `bd ready` reports it",
-            bd.show(lab, proof_id, env=env)["description"],
-        )
+        desc = bd.show(lab, proof_id, env=env)["description"]
+        self.assertIn("semantically not ready even when `bd ready` reports it", desc)
+        self.assertIn('"claim_requires"', desc)
+        self.assertIn("tmp/bead-swarm/candidates/g00.sha", desc)
+
+        forced = run_worker(lab, env, [proof_id], wave=1)
+        self.assertEqual(forced.returncode, 0, forced.stdout + forced.stderr)
+        self.assertIn("claim_requires missing", forced.stdout)
+        self.assertEqual(show_status(lab, proof_id, env), "open")
+        self.assertFalse((lab / "files" / "proof.txt").exists())
 
         result = run_swarm(lab, env, meta)
 

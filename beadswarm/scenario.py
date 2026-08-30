@@ -98,6 +98,8 @@ def bead_body(bead: dict[str, Any]) -> str:
         contract["source"] = bead["source"]
     if bead.get("sources"):
         contract["sources"] = list(bead["sources"])
+    if bead.get("claim_requires"):
+        contract["claim_requires"] = list(bead["claim_requires"])
     background = bead.get("body") or f"Lab bead `{bead.get('key')}`."
     return f"{background}\n\n{render(contract)}"
 

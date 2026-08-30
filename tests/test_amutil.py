@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from beadswarm.amutil import parse_reserve
-from beadswarm.contract import parse_contract
+from beadswarm.contract import missing_claim_requires, parse_contract
+from beadswarm.scenario import bead_body
 from beadswarm.worker import parse_allowed
 
 
@@ -40,6 +43,43 @@ class ContractTests(unittest.TestCase):
         contract = parse_contract({"title": "[lab] write files/03.txt", "description": ""})
         self.assertEqual(contract["files"], ["files/03.txt"])
         self.assertEqual(contract["mode"], "write")
+        self.assertEqual(contract["claim_requires"], [])
+
+    def test_claim_requires_from_json_fence(self) -> None:
+        shown = {
+            "description": (
+                "## Closure requires\n\n"
+                "```json\n"
+                '{"files": ["files/proof.txt"], "mode": "write", '
+                '"claim_requires": ["tmp/bead-swarm/candidates/g00.sha"]}\n'
+                "```\n"
+            ),
+        }
+        contract = parse_contract(shown)
+        self.assertEqual(contract["claim_requires"], ["tmp/bead-swarm/candidates/g00.sha"])
+        self.assertEqual(contract["files"], ["files/proof.txt"])
+
+    def test_bead_body_renders_claim_requires(self) -> None:
+        body = bead_body(
+            {
+                "key": "proof",
+                "files": ["files/proof.txt"],
+                "claim_requires": ["tmp/bead-swarm/candidates/g00.sha"],
+            }
+        )
+        contract = parse_contract({"description": body})
+        self.assertEqual(contract["claim_requires"], ["tmp/bead-swarm/candidates/g00.sha"])
+
+    def test_missing_claim_requires_tracks_absent_and_present_files(self) -> None:
+        rel = "tmp/bead-swarm/candidates/g00.sha"
+        contract = {"claim_requires": [rel]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(missing_claim_requires(root, contract), [rel])
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("a" * 40 + "\n")
+            self.assertEqual(missing_claim_requires(root, contract), [])
 
 
 class ListScenariosTests(unittest.TestCase):

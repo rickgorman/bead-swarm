@@ -138,6 +138,33 @@ else:
     sys.exit(1)
 '''
 
+FAKE_CLAIM_REQUIRES_BR = r'''#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+positional = [a for a in args[1:] if not a.startswith("-")] if args else []
+desc = """## Closure requires
+
+```json
+{"files": ["files/proof.txt"], "mode": "write", "claim_requires": ["tmp/bead-swarm/candidates/g00.sha"]}
+```
+"""
+epic = {"id": "leverage-epic-1", "title": "Program", "issue_type": "epic", "status": "open", "priority": 0}
+proof = {"id": "leverage-proof", "issue_type": "task", "status": "open", "priority": 0, "description": desc}
+cmd = args[0] if args else ""
+if cmd == "list":
+    print(json.dumps([proof] if "--parent" in args else [epic]))
+elif cmd == "show":
+    ident = positional[0] if positional else ""
+    found = epic if ident == "leverage-epic-1" else proof if ident == "leverage-proof" else {"error": "no issues found matching the provided IDs"}
+    print(json.dumps(found))
+elif cmd == "children":
+    print(json.dumps([proof]))
+elif cmd == "ready":
+    print(json.dumps([proof]))
+else:
+    sys.exit(1)
+'''
+
 FAKE_CLAUDE = r'''#!/usr/bin/env python3
 import sys
 args = sys.argv[1:]
@@ -185,6 +212,7 @@ class LauncherTests(unittest.TestCase):
         write_executable(self.root / "closed-br", FAKE_CLOSED_BR)
         write_executable(self.root / "stuck-br", FAKE_STUCK_BR)
         write_executable(self.root / "fat-ready-br", FAKE_FAT_READY_BR)
+        write_executable(self.root / "claim-requires-br", FAKE_CLAIM_REQUIRES_BR)
         write_executable(self.root / "claude", FAKE_CLAUDE)
         write_executable(self.root / "grok", FAKE_GROK)
         write_executable(self.root / "am", FAKE_AM_OK)
@@ -376,6 +404,37 @@ class LauncherTests(unittest.TestCase):
         result = self.swarm(
             ["--seat", "grok", "--epic", "leverage-epic-1", "--no-am"],
             self.env(br="stuck-br"),
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("open beads", result.stdout)
+        self.assertNotIn("closed epic", result.stdout)
+
+    def test_claim_requires_missing_file_is_not_ready(self) -> None:
+        result = self.swarm(
+            ["--dry-run", "--seat", "grok", "--epic", "leverage-epic-1"],
+            self.env(br="claim-requires-br"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("skip leverage-proof: claim_requires missing tmp/bead-swarm/candidates/g00.sha", result.stdout)
+        self.assertIn("ready (non-epic, this epic): 0", result.stdout)
+        self.assertIn("frontier dry", result.stdout)
+
+    def test_claim_requires_present_file_is_ready(self) -> None:
+        sha = self.cwd / "tmp" / "bead-swarm" / "candidates" / "g00.sha"
+        sha.parent.mkdir(parents=True, exist_ok=True)
+        sha.write_text("a" * 40 + "\n")
+        result = self.swarm(
+            ["--dry-run", "--seat", "grok", "--epic", "leverage-epic-1"],
+            self.env(br="claim-requires-br"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("claim_requires missing", result.stdout)
+        self.assertIn("ready (non-epic, this epic): 1", result.stdout)
+
+    def test_claim_requires_missing_exits_1_without_wrapping(self) -> None:
+        result = self.swarm(
+            ["--seat", "grok", "--epic", "leverage-epic-1", "--no-am", "--no-scavenge"],
+            self.env(br="claim-requires-br"),
         )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("open beads", result.stdout)

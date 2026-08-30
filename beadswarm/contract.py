@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 FENCE = re.compile(r"```json\s*(\{.*?\})\s*```", re.S)
@@ -56,7 +57,29 @@ def normalize(data: dict[str, Any], shown: dict[str, Any] | None = None) -> dict
         "heartbeat": bool(data.get("heartbeat", True)),
         "hang_seconds": float(data.get("hang_seconds") or 0),
         "gate": data.get("gate") or "",
+        "claim_requires": _string_list(data.get("claim_requires")),
     }
+
+
+def _string_list(value: Any) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def missing_claim_requires(project: Path | str, contract: dict[str, Any]) -> list[str]:
+    """Relative paths in claim_requires that are not files under project."""
+    root = Path(project)
+    missing: list[str] = []
+    for rel in contract.get("claim_requires") or []:
+        path = str(rel).strip()
+        if not path:
+            continue
+        if not (root / path).is_file():
+            missing.append(path)
+    return missing
 
 
 def render(data: dict[str, Any]) -> str:

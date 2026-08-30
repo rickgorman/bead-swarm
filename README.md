@@ -200,6 +200,7 @@ bin/bead-swarm --lab --seat grok --epic "$(cat /tmp/ovx/EPIC)" --cwd /tmp/ovx --
 | 32 | `p0-vs-p4` | Both priorities ready; `--once` takes **P0** (`high.txt`); full run takes both. |
 | 33 | `idempotent-rerun` | Second swarm on a closed epic is a no-op. |
 | 34 | `tiny-hang` | One hang bead. A second swarm skip-lives (ready is empty so it never takes `launcher.lock`); SIGTERM then lets a third swarm spawn. |
+| 35 | `future-gate-sha` | Graph-ready proof waits for a missing `claim_requires` SHA file. Swarm must not claim it; exit 1, epic stays open. |
 
 ### Surprises the tests pin
 
@@ -207,6 +208,7 @@ bin/bead-swarm --lab --seat grok --epic "$(cat /tmp/ovx/EPIC)" --cwd /tmp/ovx --
 - Parallel `am` CLIs on one mailbox also hit a **storage-root activity lock** (`temporarily busy` / sqlite busy), even on distinct paths. Retry that the same way as a file conflict.
 - `bd update --claim` is per **actor**. Two workers as the same OS user both win; pass `--actor BlueLake` vs `--actor CoralPeak`. A failed claim can still exit 0 with `already claimed`.
 - `bd ready --unassigned` hides a reopened bead that still has an assignee. Unclaim with `--assignee ""`.
+- `bd ready` is not semantic ready; `claim_requires` files must exist.
 - `am file_reservations reserve --ttl 1` is **one minute**, not one second (the CLI help still says seconds).
 - `bd children` hides closed kids; wrap uses `bd list --parent --all`. A wrap that listed one still-open closer exits 1; the next swarm closes the epic.
 - `bd dep add` refuses cycles. A stuck `in_progress` blocker is the realistic dry-frontier trap.
