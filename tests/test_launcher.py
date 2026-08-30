@@ -36,7 +36,37 @@ elif cmd == "children":
     kids = pair if ident == "leverage-epic-1" else twenty if ident == "leverage-epic-20" else []
     print(json.dumps(kids))
 elif cmd == "ready":
-    print(json.dumps([epic, *pair, *twenty]))
+    if "--parent" in args:
+        ident = args[args.index("--parent") + 1]
+        kids = pair if ident == "leverage-epic-1" else twenty if ident == "leverage-epic-20" else []
+        print(json.dumps(kids))
+    else:
+        print(json.dumps([epic, *pair, *twenty]))
+else:
+    sys.exit(1)
+'''
+
+FAKE_FAT_READY_BR = r'''#!/usr/bin/env python3
+import json, sys
+args = sys.argv[1:]
+positional = [a for a in args[1:] if not a.startswith("-")] if args else []
+epic = {"id": "leverage-epic-1", "title": "Program", "issue_type": "epic", "status": "open", "priority": 0}
+pair = [{"id": "leverage-a", "issue_type": "task", "priority": 1}, {"id": "leverage-b", "issue_type": "feature", "priority": 1}]
+noise = [{"id": f"other-{n}", "issue_type": "task", "priority": 0} for n in range(200)]
+cmd = args[0] if args else ""
+if cmd == "list":
+    print(json.dumps(pair if "--parent" in args else [epic]))
+elif cmd == "show":
+    ident = positional[0] if positional else ""
+    found = next((item for item in [epic, *pair] if item["id"] == ident), None)
+    print(json.dumps(found if found else {"error": "no issues found matching the provided IDs"}))
+elif cmd == "children":
+    print(json.dumps(pair))
+elif cmd == "ready":
+    if "--parent" in args:
+        print(json.dumps(pair))
+    else:
+        print(json.dumps(noise))
 else:
     sys.exit(1)
 '''
@@ -154,6 +184,7 @@ class LauncherTests(unittest.TestCase):
         write_executable(self.root / "empty-br", FAKE_EMPTY_BR)
         write_executable(self.root / "closed-br", FAKE_CLOSED_BR)
         write_executable(self.root / "stuck-br", FAKE_STUCK_BR)
+        write_executable(self.root / "fat-ready-br", FAKE_FAT_READY_BR)
         write_executable(self.root / "claude", FAKE_CLAUDE)
         write_executable(self.root / "grok", FAKE_GROK)
         write_executable(self.root / "am", FAKE_AM_OK)
@@ -299,6 +330,14 @@ class LauncherTests(unittest.TestCase):
         result = self.swarm(
             ["--dry-run", "--seat", "composer", "--epic", "leverage-epic-1"],
             self.env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ready (non-epic, this epic): 2", result.stdout)
+
+    def test_ready_parent_not_swamped_by_global_p0_window(self) -> None:
+        result = self.swarm(
+            ["--dry-run", "--seat", "grok", "--epic", "leverage-epic-1"],
+            self.env(br="fat-ready-br"),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("ready (non-epic, this epic): 2", result.stdout)

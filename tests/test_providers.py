@@ -124,6 +124,31 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(pinned.harness, "grok")
 
 
+class ScavengeScopeTests(unittest.TestCase):
+    def test_allowed_ids_skips_foreign_in_progress(self) -> None:
+        from unittest.mock import patch
+
+        from beadswarm import scavenge
+
+        calls: list[str] = []
+
+        def classify(project, bead_id, **kwargs):
+            return {"bead": bead_id, "kind": scavenge.UNKNOWN}
+
+        def apply(project, report, **kwargs):
+            calls.append(report["bead"])
+            return "skip-unknown"
+
+        with (
+            patch("beadswarm.scavenge.in_progress_ids", return_value=["keep-me", "other-prog"]),
+            patch("beadswarm.scavenge.classify", side_effect=classify),
+            patch("beadswarm.scavenge.apply", side_effect=apply),
+        ):
+            reports = scavenge.scavenge(Path("."), allowed_ids={"keep-me"})
+        self.assertEqual([row["bead"] for row in reports], ["keep-me"])
+        self.assertEqual(calls, ["keep-me"])
+
+
 class SettingsTests(unittest.TestCase):
     def test_int_override(self) -> None:
         old = os.environ.get("BEAD_SWARM_WAVE_SIZE")

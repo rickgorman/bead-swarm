@@ -142,10 +142,13 @@ def scavenge(
     hung_after: float | None = None,
     steal_hung: bool = False,
     env: dict[str, str] | None = None,
+    allowed_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     steal = steal_hung or hung_after is not None
     out = []
     for bead_id in in_progress_ids(project, env=env):
+        if allowed_ids is not None and bead_id not in allowed_ids:
+            continue
         report = classify(
             project, bead_id, max_age=max_age, hung_after=hung_after, env=env
         )
