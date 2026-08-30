@@ -2,6 +2,8 @@
 
 Host launcher that **builds an epic of Beads** in waves. The program is `bin/bead-swarm` (Python), with helpers in `beadswarm/`.
 
+This repo is **derived from and inspired by** [Jeffrey Emanuel](https://github.com/Dicklesworthstone)’s [Agent Flywheel](https://agent-flywheel.com/tldr), especially the [Core Flywheel](https://agent-flywheel.com/core-flywheel): Agent Mail for coordination, `br` for task structure, and `bv` for graph-aware routing. The tools Jeffrey publishes under [Dicklesworthstone](https://github.com/Dicklesworthstone) — [MCP Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail), [beads_rust (`br`)](https://github.com/Dicklesworthstone/beads_rust), [beads_viewer (`bv`)](https://github.com/Dicklesworthstone/beads_viewer) — are the operating system this launcher sits on. Beads itself is [Steve Yegge’s](https://github.com/steveyegge/beads). Like Jeffrey’s rust port, this is not a replacement for that stack and not a criticism of it: it is a host wave runner that tries to *operate* the core loop as designed (claim, reserve, spawn, close) instead of leaving the human as the traffic cop.
+
 You point it at a repo that already has a `.beads` graph. It takes `--epic <id>`, claims ready descendants, leases files through Agent Mail, and recycles orchestrator waves until `bd ready` for that tree is empty and the epic can close.
 
 This chat session is **not** the orchestrator. Exec the binary; it scans which of `claude` / `codex` / `grok` / `cursor-agent` are installed, walks `PLANNING_MODELS`, and spawns the harness that can actually run that model.
@@ -63,7 +65,7 @@ bead-swarm --epic YOUR-EPIC-ID --cwd /path/to/repo
 
 TTY with no `--epic` prints open epics and waits for a pick. Non-TTY without `--epic` prints the list and exits 1.
 
-3. Watch stdout: seat, ready count, `wave N: spawned`, then either `frontier dry` (exit 0, epic closed) or leftover ready/stuck beads (exit 1).
+3. Watch stdout: seat, ready count, `wave N: spawned`, then either `frontier dry` (exit 0, epic closed) or leftover ready/stuck beads (exit 1). Ready is scoped with `br ready --parent <epic>` so other programs' P0 work cannot hide this tree. Scavenge only inspects `in_progress` descendants of that epic.
 
 Useful knobs:
 
