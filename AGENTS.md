@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This checkout is the bead-swarm **lab + launcher**, not Leverage. Beads you create here must stay in a throwaway `--cwd`. Never write Leverage's `.beads`.
+This checkout **is** the bead-swarm launcher (`bin/bead-swarm`). Read `README.md` first: clone, `bin/install`, then `bead-swarm --epic <id> --cwd <repo-with-.beads>`. Do not empty a graph in this chat — exec the binary. `--cwd` is the beads project; it is not this checkout unless the human said so.
 
 ## How to invoke
 

@@ -1,34 +1,122 @@
 # bead-swarm
 
-Dummy graphs and tests for the host `bin/bead-swarm` launcher: waves, `bd` claims, Agent Mail file leases, and epic wrap.
+Host launcher that **builds an epic of Beads** in waves. The program is `bin/bead-swarm` (Python), with helpers in `beadswarm/`.
 
-This is not the Leverage app. Each scenario materializes into a throwaway git+`bd` directory so the live beads graph stays untouched.
+You point it at a repo that already has a `.beads` graph. It takes `--epic <id>`, claims ready descendants, leases files through Agent Mail, and recycles orchestrator waves until `bd ready` for that tree is empty and the epic can close.
+
+This chat session is **not** the orchestrator. Exec the binary; it probes a seat (Fable → Sol → Opus → Terra → Grok → Composer) and spawns the harness that can actually run that model.
+
+```
+bin/bead-swarm --epic <id> --cwd /path/to/your/repo
+```
 
 ## Prerequisites
 
 Install these on the host. `bin/install --status` reports which ones it can see.
 
-**Required for the lab tests** (`python3 -m unittest discover -s tests`):
+**Required to run `bin/bead-swarm`:**
 
 | Binary | What it is | Link |
 |--------|------------|------|
 | `python3` | Python 3.11+ | [python.org](https://www.python.org/downloads/) |
-| `git` | Isolated lab repos | [git-scm.com](https://git-scm.com/) |
+| `git` | The target repo is a git checkout | [git-scm.com](https://git-scm.com/) |
 | `bd` | Go [Beads](https://github.com/steveyegge/beads) — graph issue tracker (`bd ready`, `--claim`, `--json`) | [steveyegge/beads](https://github.com/steveyegge/beads) |
 | `am` | [Agent Mail](https://github.com/Dicklesworthstone/mcp_agent_mail) CLI — identities and file reservations | [Dicklesworthstone/mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail) |
 
-**Used by the launcher / workers** (tests pin `BEAD_SWARM_BR_BIN` to Go `bd` because `br` on PATH is often a shim):
+**Used by the launcher** (tests pin `BEAD_SWARM_BR_BIN` to Go `bd` because `br` on PATH is often a shim):
 
 | Binary | What it is | Link |
 |--------|------------|------|
 | `br` | [Beads Rust](https://github.com/Dicklesworthstone/beads_rust) — Rust port of Beads; same graph, `br` CLI | [Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust) |
-| `bv` | [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) — TUI + robot-next. **Never run bare `bv`** (it opens a TUI). Lab workers call `bv-robot-next` / `bv --robot-next` only, and skip BV unless `BEAD_SWARM_SKIP_BV=0`. | [Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) |
+| `bv` | [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) — TUI + robot-next. **Never run bare `bv`** (it opens a TUI). Workers call `bv-robot-next` / `bv --robot-next` only. | [Dicklesworthstone/beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) |
 
-**Optional, live waves only** (not the `--lab` worker). The launcher probes this seat ladder and caches the winner for an hour: Fable / Sol / Opus / Terra / Grok / Composer — via `claude`, `codex`, `grok`, and `cursor-agent`. Lab runs pass `--lab --seat grok` and never need those harnesses.
+**Live waves** also need at least one coding harness on `PATH`: `claude`, `codex`, `grok`, or `cursor-agent`. The launcher probes that ladder and caches the winner for an hour (`--reprobe` ignores the cache). `--lab` skips the harnesses and uses this repo's deterministic worker instead.
 
-## The angles
+`--cwd` must contain `.beads`. The swarm checkout is **not** the beads project unless you pass it on purpose.
 
-Baseline plus overlap, then ten more combinations of dependencies, parallelism, and Agent Mail.
+## Install
+
+Do **not** copy `bin/bead-swarm` somewhere else. The lab worker imports `beadswarm` from this checkout; a copied bin will break. Use a shim that sets `BEAD_SWARM_HOME`, or call `./bin/bead-swarm`.
+
+```bash
+git clone https://github.com/rickgorman/bead-swarm.git
+cd bead-swarm
+bin/install --global          # shims in ~/.local/bin + user-level agent skills
+hash -r
+command -v bead-swarm
+bin/install --status
+```
+
+Per-repo (this checkout, or a submodule): `bin/install --local` then `./bin/bead-swarm`. Undo global: `bin/install --uninstall`.
+
+The skill (`.claude/skills/bead-swarm`, plus `.grok` / `.agents` links) tells an agent **when** to exec the binary and **not** to empty the graph in the live chat.
+
+## Drain an epic
+
+1. Target repo has `.beads` and an open epic (`bd list -t epic --status open`).
+2. Preview, then run:
+
+```bash
+bead-swarm --dry-run --epic YOUR-EPIC-ID --cwd /path/to/repo
+bead-swarm --epic YOUR-EPIC-ID --cwd /path/to/repo
+```
+
+TTY with no `--epic` prints open epics and waits for a pick. Non-TTY without `--epic` prints the list and exits 1.
+
+3. Watch stdout: seat, ready count, `wave N: spawned`, then either `frontier dry` (exit 0, epic closed) or leftover ready/stuck beads (exit 1).
+
+Useful knobs:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--cwd` | current directory | Beads + Agent Mail project |
+| `--epic` | TTY picker | Epic whose descendants to empty |
+| `--wave-size` | 10 | Beads per wave, then that orchestrator **exits** |
+| `--max-waves` | 4 | Concurrent waves |
+| `--stagger-seconds` | 30 | Delay between spawning waves |
+| `--seat` | probe ladder | Pin `fable` / `sol` / `opus5` / `terra` / `grok` / `composer` |
+| `--once` | off | One round of waves, no recycle |
+| `--no-am` | off | Skip Agent Mail (including the launcher lock) |
+| `--no-scavenge` | off | Do not close/requeue `in_progress` corpses when ready is empty |
+| `--hung-after SEC` | off | Steal a live pid whose heartbeat is older than SEC |
+| `--probe-only` | | Print the seat and exit |
+| `--lab` | off | Deterministic worker (dummy graphs / tests), not an LLM |
+
+Env overrides exist for the same values (`BEAD_SWARM_WAVE_SIZE`, `BEAD_SWARM_BR_BIN`, `BEAD_SWARM_AM_BIN`, …).
+
+Two host launchers on the same `--cwd` flock `tmp/bead-swarm/launcher.lock`; the second bounces.
+
+## What a wave does
+
+Each child process gets a hard budget of `--wave-size` ready ids (P0 first) and must print `WAVE_DONE` and exit. The host recycles until the epic's frontier is dry.
+
+Inside a live wave the spawned orchestrator:
+
+1. Claims only ids on its allowed list (`br update <id> --claim`)
+2. Reserves files with `am` **before** writes; retries exclusive JSON `conflicts` and mailbox `temporarily busy`
+3. Spawns a **fresh coder** per bead (the orchestrator writes zero product code)
+4. Closes with evidence; the host wraps the epic when every child is closed
+
+`--lab` replaces that harness with `bin/bead-swarm-lab-worker` (claim → reserve → write → release → close). Use it for dummy graphs, not for building your product.
+
+If a worker dies mid-bead, the next recycle **scavenges** `in_progress` rows (complete file → close; incomplete + dead pid → unclaim). Live pids are left alone unless you pass `--hung-after`.
+
+## Lab tests (optional)
+
+Dummy graphs pressure-test overlap, claims, Agent Mail, wrap, and crash/hang recovery without touching a real project graph.
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+One scenario, no unittest:
+
+```bash
+bin/bead-swarm-lab-setup --scenario 01-overlap-exclusive --dir /tmp/ovx --force
+bin/bead-swarm --lab --seat grok --epic "$(cat /tmp/ovx/EPIC)" --cwd /tmp/ovx --wave-size 1 --max-waves 2 --stagger-seconds 0
+```
+
+### Scenario corpus
 
 | # | Scenario | What it stresses |
 |---|---|---|
@@ -60,7 +148,7 @@ Baseline plus overlap, then ten more combinations of dependencies, parallelism, 
 | 33 | `idempotent-rerun` | Second swarm on a closed epic is a no-op. |
 | 34 | `tiny-hang` | One hang bead. A second swarm skip-lives (ready is empty so it never takes `launcher.lock`); SIGTERM then lets a third swarm spawn. |
 
-## Surprises the tests pin
+### Surprises the tests pin
 
 - Agent Mail exclusive conflicts return **exit 0** plus JSON `conflicts`. Do not trust the process status.
 - Parallel `am` CLIs on one mailbox also hit a **storage-root activity lock** (`temporarily busy` / sqlite busy), even on distinct paths. Retry that the same way as a file conflict.
@@ -70,57 +158,15 @@ Baseline plus overlap, then ten more combinations of dependencies, parallelism, 
 - `bd children` hides closed kids; wrap uses `bd list --parent --all`. A wrap that listed one still-open closer exits 1; the next swarm closes the epic.
 - `bd dep add` refuses cycles. A stuck `in_progress` blocker is the realistic dry-frontier trap.
 
-## Agent setup (global vs per-repo)
-
-Do **not** copy `bin/bead-swarm` somewhere else. Lab workers import `beadswarm` from this checkout; a copied bin will break. Use a shim that sets `BEAD_SWARM_HOME` and execs the original, or call `./bin/bead-swarm`.
-
-**Per-repo** (this checkout, or a submodule in another app):
-
-```bash
-git clone git@github.com:rickgorman/bead-swarm.git
-cd bead-swarm
-bin/install --local          # executable bins + .grok/.agents skill links
-./bin/bead-swarm --help
-```
-
-Agents pick up `.claude/skills/bead-swarm` (and the `.grok` / `.agents` links). Invoke `./bin/bead-swarm --cwd <target> --epic <id>`.
-
-**Global** (one checkout, call `bead-swarm` from any directory):
-
-```bash
-bin/install --global         # shims in ~/.local/bin + user-level skills
-hash -r
-command -v bead-swarm
-bin/install --status
-```
-
-`--cwd` still selects the beads/AM project. A repo that already has its own `.claude/skills/bead-swarm` (Leverage) keeps that copy while you are inside it.
-
-Undo global: `bin/install --uninstall`.
-
-The skill (`.claude/skills/bead-swarm/SKILL.md`) is what tells an agent **when** to call the binary and **how** to find it.
-
-## Run
-
-See **Prerequisites**. Then:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-One scenario, no tests:
-
-```bash
-bin/bead-swarm-lab-setup --scenario 01-overlap-exclusive --dir /tmp/ovx --force
-bin/bead-swarm --lab --seat grok --epic "$(cat /tmp/ovx/EPIC)" --cwd /tmp/ovx --wave-size 1 --max-waves 2 --stagger-seconds 0
-```
-
 ## Layout
 
 ```
-bin/bead-swarm              # host wave launcher (copied from Leverage, AM-conflict + unfinished-tree fixes)
+bin/bead-swarm              # host wave launcher (Python) — this is the product
 bin/bead-swarm-lab-setup    # materialize a scenario JSON into an isolated bd repo
-bin/bead-swarm-lab-worker   # claim → AM reserve → write → release → close
-scenarios/*.json            # the corpus
+bin/bead-swarm-lab-worker   # --lab worker: claim → AM reserve → write → release → close
+bin/install                 # --local / --global / --status / --uninstall
+beadswarm/                  # library the bins import (do not copy bins off this tree)
+.claude/skills/bead-swarm   # agent skill: exec the binary, do not empty the graph in chat
+scenarios/*.json            # dummy graphs for tests
 tests/                      # launcher fakes + live bd/am scenario tests
 ```
