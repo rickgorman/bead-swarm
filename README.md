@@ -1,5 +1,3 @@
-# bead-swarm
-
 ![bead-swarm — drain an epic in waves](docs/bead-swarm-hero.png)
 
 Host launcher that **builds an epic of Beads** in waves. The program is `bin/bead-swarm` (Python), with helpers in `beadswarm/`.
